@@ -13,8 +13,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
-      - run: npm ci
+      # Using `npm install` until a package-lock.json is committed (the first
+      # local `npm install` generates it). After that, switch back to
+      # `cache: npm` above and `npm ci` here for reproducible, faster installs.
+      - run: npm install
       - run: npm run lint
       - run: npm run typecheck
       - run: npm test
