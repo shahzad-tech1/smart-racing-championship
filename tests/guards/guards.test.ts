@@ -17,6 +17,15 @@ function walk(dir: string): string[] {
   return out;
 }
 
+/** Strip block and line comments so guards check CODE, not documentation. */
+function stripComments(src: string): string {
+  return src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+}
+
+function codeOf(file: string): string {
+  return stripComments(readFileSync(file, "utf8"));
+}
+
 const SRC = resolve(process.cwd(), "src");
 
 describe("determinism guard", () => {
@@ -26,7 +35,7 @@ describe("determinism guard", () => {
     for (const dir of dirs) {
       for (const file of walk(dir)) {
         // rng.ts is allowed to use Math.imul etc., but not Math.random
-        const text = readFileSync(file, "utf8");
+        const text = codeOf(file);
         if (/Math\.random\s*\(/.test(text)) offenders.push(`${file}: Math.random`);
         if (/Date\.now\s*\(/.test(text)) offenders.push(`${file}: Date.now`);
         if (/performance\.now\s*\(/.test(text)) offenders.push(`${file}: performance.now`);
@@ -42,7 +51,7 @@ describe("architecture boundary guard", () => {
     const offenders: string[] = [];
     for (const dir of dirs) {
       for (const file of walk(dir)) {
-        const text = readFileSync(file, "utf8");
+        const text = codeOf(file);
         if (/from\s+['"][^'"]*\/(ui|render)\//.test(text) || /from\s+['"]\.\.?\/(ui|render)['"]/.test(text)) {
           offenders.push(file);
         }
