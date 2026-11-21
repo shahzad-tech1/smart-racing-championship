@@ -68,7 +68,13 @@ export const CIRCUIT1_EDGES: Edge[] = [
 ];
 
 export function buildCircuit1(): Graph {
-  return new Graph(CIRCUIT1_VERTICES, CIRCUIT1_EDGES);
+  // Build from COPIES so in-race mutations (block/unblock, activate/deactivate)
+  // never leak back into the shared module-level fixture or into another Graph
+  // built from it. The fixture arrays must stay pristine.
+  return new Graph(
+    CIRCUIT1_VERTICES.map((v) => ({ ...v })),
+    CIRCUIT1_EDGES.map((e) => ({ ...e })),
+  );
 }
 
 export const CIRCUIT1_META = {
