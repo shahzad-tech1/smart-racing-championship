@@ -80,12 +80,15 @@ function normalizedTerms(e: Edge, r: NormalizationRefs) {
 function spreadReport(circuits: Edge[][], r: NormalizationRefs) {
   const all = circuits.flat();
   const keys = ["D", "T", "F", "R", "O"] as const;
-  const cols: Record<string, number[]> = { D: [], T: [], F: [], R: [], O: [] };
+  const cols: Record<(typeof keys)[number], number[]> = { D: [], T: [], F: [], R: [], O: [] };
   for (const e of all) {
     const n = normalizedTerms(e, r);
     for (const k of keys) cols[k].push(n[k]);
   }
-  const median = (v: number[]) => { const s = [...v].sort((a, b) => a - b); return s[Math.floor(s.length / 2)]; };
+  const median = (v: number[]) => {
+    const s = [...v].sort((a, b) => a - b);
+    return s[Math.floor(s.length / 2)] ?? 0;
+  };
   console.log("\nNormalized term spread (every value must sit in [0,1]):");
   for (const k of keys) {
     const v = cols[k];
@@ -121,10 +124,11 @@ export function comparePresets(routes: Record<string, Edge[]>, r: NormalizationR
   console.log(header);
   const winners = new Set<string>();
   for (const [preset, w] of Object.entries(PRESETS)) {
-    const costs = names.map(n => routeCost(routes[n], w, r));
+    const costs = names.map(n => routeCost(routes[n] ?? [], w, r));
     const minIdx = costs.indexOf(Math.min(...costs));
-    winners.add(names[minIdx]);
-    console.log([preset.padEnd(10), ...costs.map(c => c.toFixed(3).padStart(12)), "  " + names[minIdx]].join(""));
+    const winner = names[minIdx] ?? "?";
+    winners.add(winner);
+    console.log([preset.padEnd(10), ...costs.map(c => c.toFixed(3).padStart(12)), "  " + winner].join(""));
   }
   console.log(winners.size > 1
     ? `PASS: presets diverge (${winners.size} distinct winners) — spec §3.3 satisfied.`
