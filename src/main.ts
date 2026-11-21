@@ -86,7 +86,6 @@ function boot() {
     )
     .join("");
 
-  // eslint-disable-next-line no-console
   console.log(`circuit1 loaded: ${g.vertexCount} vertices, ${g.edgeCount} edges`);
 }
 
