@@ -147,7 +147,7 @@ async function main() {
   // Try to load the real circuits once they exist; otherwise use the demo.
   let circuits: Edge[][] = [DEMO_CIRCUIT];
   try {
-    const mod = await import("../data/circuits/index.js");
+    const mod = await import("../data/circuits/index");
     if (mod?.ALL_CIRCUITS?.length) {
       circuits = mod.ALL_CIRCUITS.map((g: any) => g.allEdges());
       console.log(`Loaded ${circuits.length} real circuit(s).`);

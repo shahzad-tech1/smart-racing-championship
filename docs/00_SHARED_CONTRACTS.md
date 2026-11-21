@@ -36,6 +36,7 @@ export interface Edge {
   status: EdgeStatus;
   isShortcut: boolean;
   directed: boolean;      // false = both directions; true = one-way from->to
+  obstacle?: number;      // 0..5 static hazard penalty (0 = clear); dynamic hazards add on top via EffectLayer. Default 0.
 }
 ```
 
@@ -346,5 +347,6 @@ export class RaceEngine {
 | Date | Change | Agreed by |
 |---|---|---|
 | Phase 0 | Initial freeze | A + B |
+| Phase 0 | Added optional `Edge.obstacle` (0..5 static hazard, default 0) so the `O` cost term and the Safety preset act on base edges, not only on dynamic effects. | A — **confirm with B** |
 
 (Append a row for every change. No silent edits.)
