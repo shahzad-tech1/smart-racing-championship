@@ -13,7 +13,8 @@
     "test:ui": "vitest --ui",
     "lint": "eslint src tests",
     "typecheck": "tsc --noEmit",
-    "measure-refs": "tsx src/experiments/measure-refs.ts"
+    "measure-refs": "tsx src/experiments/measure-refs.ts",
+    "experiments": "tsx src/experiments/run-all.ts"
   },
   "dependencies": {
     "chart.js": "^4.4.6"
