@@ -1,29 +1,28 @@
 /**
  * src/data/circuits/index.ts — Circuit registry.
- * Circuits 2 & 3 (generated via MST + backtracking) are added in Phase 4.
+ * circuit1 is hand-authored; circuits 2 & 3 are generated (MST + backtracking)
+ * from fixed seeds, so they are deterministic and validated.
  */
 
 import type { Graph } from "../../core/Graph";
+import type { CircuitMeta } from "./meta";
 import { buildCircuit1, CIRCUIT1_META } from "./circuit1";
+import { generateCircuit } from "../../algorithms/generate";
 
-export interface CircuitMeta {
-  id: string;
-  name: string;
-  startVertex: number;
-  finishVertex: number;
-  laps: number;
-  checkpointOrder: readonly number[];
-}
+export type { CircuitMeta } from "./meta";
 
 export interface CircuitDef {
   meta: CircuitMeta;
   build: () => Graph;
 }
 
+const circuit2 = generateCircuit(101, { name: "Vortex" });
+const circuit3 = generateCircuit(202, { name: "Serpentine" });
+
 export const CIRCUITS: CircuitDef[] = [
   { meta: CIRCUIT1_META, build: buildCircuit1 },
-  // Phase 4: { meta: CIRCUIT2_META, build: buildCircuit2 },
-  // Phase 4: { meta: CIRCUIT3_META, build: buildCircuit3 },
+  { meta: circuit2.meta, build: () => generateCircuit(101, { name: "Vortex" }).graph },
+  { meta: circuit3.meta, build: () => generateCircuit(202, { name: "Serpentine" }).graph },
 ];
 
 /** Built Graph instances — consumed by measure-refs and the UI. */
