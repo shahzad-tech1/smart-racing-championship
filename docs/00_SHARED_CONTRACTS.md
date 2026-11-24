@@ -1,6 +1,6 @@
 # 00 — Shared Contracts (FROZEN)
 
-> **This is the contract between Person A (algorithms) and Person B (UI).**
+> **This is the contract between Person A (Routing & Track) and Person B (Resources, Events & Standings).** Both own algorithms and frontend; see README section 0.5.
 > Both of you implement against these exact types and signatures. If a type changes, it changes **here first**, in its own commit, agreed by both. Everything else in the project depends on this file being stable.
 
 These are TypeScript interfaces. Put them in `src/core/types.ts` (data), `src/core/cost.ts` (cost model), `src/engine/comparator.ts` (comparator), and `src/core/instrumentation.ts` (counters). This document is the spec; the code files must match it exactly.
@@ -163,7 +163,7 @@ export function edgeCost(
 
 **Invariant (tested):** the Route Planner UI must display exactly `edgeCost(...)` summed along the path. Never recompute cost a second way for display. This satisfies *"the cost displayed to the player must be the same cost optimized by the algorithm."*
 
-**Preset demonstration (spec §3.3):** at least one circuit must have a vertex pair where Balanced/Speed/Economy/Safety pick *different* routes. Person A builds a fixture test proving this; Person B surfaces it in the Route Planner.
+**Preset demonstration (spec §3.3):** at least one circuit must have a vertex pair where Balanced/Speed/Economy/Safety pick *different* routes. Person A builds a fixture test proving this and surfaces it in the Route Planner.
 
 ---
 
@@ -269,7 +269,7 @@ export type AlgoStep =
   | { kind: "dpCell"; i: number; b: number; value: number };
 ```
 
-### Canonical algorithm signatures (Person A implements, both consume)
+### Canonical algorithm signatures (each member implements their own six, both consume)
 
 ```ts
 // Act 1
@@ -322,7 +322,7 @@ The implementation supports a **consistent** heuristic (no reopening). If an inc
 
 ## 8. Engine ↔ UI boundary
 
-Person B's UI never computes a route or a cost or a sort itself. It calls Person A's functions and renders the result. The engine exposes a façade so the UI has one import surface:
+The UI (either member's screens) never computes a route or a cost or a sort itself. It calls the algorithm functions and renders the result. The engine exposes a façade so the UI has one import surface:
 
 ```ts
 // src/engine/RaceEngine.ts  (A owns logic; B calls these)
@@ -350,3 +350,16 @@ export class RaceEngine {
 | Phase 0 | Added optional `Edge.obstacle` (0..5 static hazard, default 0) so the `O` cost term and the Safety preset act on base edges, not only on dynamic effects. | A — **confirm with B** |
 
 (Append a row for every change. No silent edits.)
+
+---
+
+## Frozen race-rule decisions (spec §4.2, §4.3, §4.5, §4.6)
+
+These choices are fixed and covered by `tests/spec/pdf-engine.test.ts`.
+
+- **Fuel:** tank 100 units (1000 tenths). One station stop sells at most 40 units and costs 3 s; a full tank buys nothing and costs no time. A car never starts a road it cannot afford; fuel never reads below 0.
+- **Recovery policy (identical for every racer):** a car that cannot afford its next road buys fuel if it stands on an active station, otherwise reroutes to the nearest active station reachable on its remaining fuel; if none is reachable it is **DNF** (never frozen). AI cars also stop at the first station reached below 25% fuel.
+- **Fuel planning:** every racer runs the refuelling DP (`planFuelStops`) over the rest of the race and takes its next planned stop; if no plan is feasible it reroutes for economy and plans again.
+- **Unfinished racers** (DNF or time limit) are classified after all finishers by laps, then checkpoints, then elapsed time, then racer id. **They still receive the points of their classified position** (policy stated per spec §4.2 rule 8).
+- **Events:** closures, shortcut toggles and station activations are independent effects with their own expiry; the graph is re-derived from the original state plus every active effect. A closure beats a re-open. A shortcut toggle closes an open shortcut and opens a closed one; it is ignored on a non-shortcut edge. Station/booster events are ignored on the wrong kind of vertex.
+- **Restricted road:** traversable, effective time = baseTime / 0.5 (the same cap a speed-restriction event applies).

@@ -14,6 +14,7 @@
  */
 
 import type { Edge, EventType } from "../core/types";
+import { withRestriction } from "../core/cost";
 
 export interface ActiveEffect {
   sourceEventId: number;
@@ -57,8 +58,10 @@ export class EffectLayer {
 
   /** Derive the effective edge from the base edge + all active effects on it. */
   effectiveEdge(base: Edge): Edge {
+    // a Restricted road is slow before any temporary effect is layered on (spec §3.1)
+    const slowed = withRestriction(base);
     const fx = this.forTarget(base.id);
-    if (fx.length === 0) return base;
+    if (fx.length === 0) return slowed;
 
     let status = base.status;
     if (fx.some((e) => e.type === "RoadBlockage" || e.type === "ShortcutToggle")) {
@@ -73,11 +76,11 @@ export class EffectLayer {
     }
 
     return {
-      ...base,
+      ...slowed,
       status,
       difficulty: Math.min(5, base.difficulty + penalty),
       obstacle: Math.min(5, (base.obstacle ?? 0) + penalty),
-      baseTime: base.baseTime / strictestCap,
+      baseTime: slowed.baseTime / strictestCap,
     };
   }
 

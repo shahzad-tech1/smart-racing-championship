@@ -11,7 +11,7 @@
  * to any other on-stack vertex is a genuine cycle.
  */
 
-import type { Graph } from "../core/Graph";
+import type { Graph, Neighbor } from "../core/Graph";
 import type { AlgoTrace } from "../core/instrumentation";
 import type { Vertex } from "../core/types";
 
@@ -37,7 +37,18 @@ export function dfs(g: Graph, start: number, trace?: AlgoTrace): DfsResult {
   let timer = 0;
   let hasCycle = false;
 
-  const visit = (u: number, viaEdgeId: number | null, par: number | null): void => {
+  // Explicit stack instead of recursion: a long road (tens of thousands of vertices, as in
+  // the Experiment 1 sweeps) must not overflow the JS call stack. The visiting order, the
+  // discovery/finish stamps and the cycle rule are identical to the recursive formulation.
+  interface Frame {
+    u: number;
+    viaEdgeId: number | null;
+    nbrs: Neighbor[];
+    next: number;
+  }
+  const stack: Frame[] = [];
+
+  const enter = (u: number, viaEdgeId: number | null, par: number | null): void => {
     color.set(u, 1);
     discovery.set(u, timer++);
     parent.set(u, par);
@@ -46,26 +57,35 @@ export function dfs(g: Graph, start: number, trace?: AlgoTrace): DfsResult {
       trace.counters.visitedVertices++;
       trace.record({ kind: "visit", vertex: u });
     }
-
-    for (const { edge, to } of g.neighbors(u, { ignoreBlocked: true })) {
-      if (trace) trace.counters.examinedEdges++;
-      if (edge.id === viaEdgeId) continue; // don't walk back along the same undirected edge
-      const c = color.get(to) ?? 0;
-      if (c === 0) {
-        visit(to, edge.id, u);
-      } else if (c === 1) {
-        hasCycle = true; // back edge to an on-stack vertex
-      }
-    }
-
-    color.set(u, 2);
-    finish.set(u, timer++);
+    stack.push({ u, viaEdgeId, nbrs: g.neighbors(u, { ignoreBlocked: true }), next: 0 });
   };
 
-  if (g.hasVertex(start)) visit(start, null, null);
+  const visit = (root: number): void => {
+    enter(root, null, null);
+    while (stack.length > 0) {
+      const f = stack[stack.length - 1]!;
+      if (f.next < f.nbrs.length) {
+        const { edge, to } = f.nbrs[f.next++]!;
+        if (trace) trace.counters.examinedEdges++;
+        if (edge.id === f.viaEdgeId) continue; // don't walk back along the same undirected edge
+        const c = color.get(to) ?? 0;
+        if (c === 0) {
+          enter(to, edge.id, f.u);
+        } else if (c === 1) {
+          hasCycle = true; // back edge to an on-stack vertex
+        }
+      } else {
+        color.set(f.u, 2);
+        finish.set(f.u, timer++);
+        stack.pop();
+      }
+    }
+  };
+
+  if (g.hasVertex(start)) visit(start);
   // Continue as a forest so the whole graph is traversed (components, global cycle).
   for (const v of g.allVertices()) {
-    if ((color.get(v.id) ?? 0) === 0) visit(v.id, null, null);
+    if ((color.get(v.id) ?? 0) === 0) visit(v.id);
   }
 
   return {

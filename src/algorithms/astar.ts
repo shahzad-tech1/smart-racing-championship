@@ -70,7 +70,7 @@ export function aStar(
         if (trace) {
           trace.counters.relaxedEdges++;
           trace.counters.heapPushes++;
-          trace.record({ kind: "relax", edge: edge.id, improved: true });
+          trace.record({ kind: "relax", edge: edge.id, improved: true, to, g: tentative });
         }
       }
     }
@@ -88,9 +88,26 @@ function euclid(g: Graph, a: number, b: number): number {
   return Math.hypot(va.x - vb.x, va.y - vb.y);
 }
 
+/**
+ * Largest k in (0, 1] with  road.distance >= k * straightLine(road endpoints)  for EVERY road
+ * (blocked ones included, they may reopen). It is 1 whenever the data honours the spec's
+ * precondition (§5.2: each edge length is at least the straight-line distance). If a road is
+ * shorter than the straight line, scaling the heuristic by k restores admissibility AND
+ * consistency, so A* stays optimal on imperfect data instead of silently returning a worse route.
+ */
+export function straightLineScale(g: Graph): number {
+  let k = 1;
+  for (const e of g.allEdges()) {
+    const d = euclid(g, e.from, e.to);
+    if (d > 0 && e.distance < d) k = Math.min(k, e.distance / d);
+  }
+  return k;
+}
+
 /** Straight-line distance heuristic — admissible for distance-only routing. */
 export function euclideanHeuristic(g: Graph): HeuristicFn {
-  return (v, goal) => euclid(g, v, goal);
+  const k = straightLineScale(g);
+  return (v, goal) => euclid(g, v, goal) * k;
 }
 
 /** h = 0 — turns A* into Dijkstra. Useful to prove cost equality. */
@@ -103,10 +120,12 @@ export const zeroHeuristic: HeuristicFn = () => 0;
 export function weightedHeuristic(g: Graph, cost: EdgeCostFn): HeuristicFn {
   let minRatio = Infinity;
   for (const e of g.allEdges()) {
-    if (e.status === "Blocked" || e.distance <= 0) continue;
+    // Blocked roads are included on purpose: they may reopen, and a smaller ratio is still a valid lower bound.
+    if (e.distance <= 0) continue;
     const r = cost(e) / e.distance;
     if (r >= 0 && r < minRatio) minRatio = r;
   }
   if (!Number.isFinite(minRatio) || minRatio <= 0) return zeroHeuristic;
-  return (v, goal) => euclid(g, v, goal) * minRatio;
+  const k = straightLineScale(g);
+  return (v, goal) => euclid(g, v, goal) * minRatio * k;
 }

@@ -36,12 +36,19 @@ export function makeCounters(): Counters {
 export type AlgoStep =
   | { kind: "visit"; vertex: number }
   | { kind: "enqueue"; vertex: number }
-  | { kind: "relax"; edge: number; improved: boolean }
+  /** `to`/`g` (optional) = the relaxed vertex and its new best cost, so the Lab can show the real priority queue. */
+  | { kind: "relax"; edge: number; improved: boolean; to?: number; g?: number }
   | { kind: "frontier"; vertices: number[] }
   | { kind: "pathFound"; vertices: number[]; cost: number }
   | { kind: "compare"; i: number; j: number }
   | { kind: "swap"; i: number; j: number }
-  | { kind: "dpCell"; i: number; b: number; value: number };
+  | { kind: "dpCell"; i: number; b: number; value: number }
+  /** Sorting: element written to absolute output position `index` (merge sort). */
+  | { kind: "write"; index: number; item: unknown }
+  /** Backtracking: a candidate was placed / removed / rejected by a pruning rule. */
+  | { kind: "place"; index: number }
+  | { kind: "unplace"; index: number }
+  | { kind: "prune"; index: number };
 
 export interface AlgoTrace {
   counters: Counters;

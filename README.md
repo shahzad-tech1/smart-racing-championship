@@ -3,7 +3,8 @@
 > **Course:** Design & Analysis of Algorithms (Semester 5)
 > **Deliverable:** A 2D top-down racing game that demonstrates 12 mandatory algorithm families with a functional role in gameplay.
 > **Deadline:** 05 December 2026, 11:59 PM
-> **Team size:** 2 developers (Person A = *Algorithms Core*, Person B = *Game & UI*)
+> **Team size:** 2 developers. **Each owns six of the twelve algorithm families AND a share of the frontend** (see §0.5).
+> Person A = *Routing & Track* · Person B = *Resources, Events & Standings*
 > **Stack:** TypeScript + HTML5 Canvas, built with Vite, tested with Vitest, charts with Chart.js.
 
 This repository's `docs/` folder is the **single source of truth** for how we build the project. Read this file first, then your personal README.
@@ -17,6 +18,21 @@ This repository's `docs/` folder is the **single source of truth** for how we bu
 The spec says a *detached duplicate demonstration does not satisfy integration* (PDF §1). If the Lab and the game run different copies of Dijkstra, we lose marks and risk divergent bugs. **No algorithm is ever copy-pasted.** The Lab visualizes the *same* function the car drives on.
 
 To make this possible, each algorithm accepts an optional `trace`/`counters` object. Gameplay ignores it; the Lab and experiments read it. See `docs/00_SHARED_CONTRACTS.md`.
+
+---
+
+## 0.5 Division of work (two members)
+
+| | **Person A — Routing & Track** | **Person B — Resources, Events & Standings** |
+|---|---|---|
+| **Algorithms (6 each)** | BFS · DFS · Dijkstra · A\* · Kruskal MST · Backtracking | DP (knapsack, refuel, fuel-stop planner) · Greedy · Heap/priority queue · Merge Sort · Quick Sort · Heap Sort |
+| **Core code** | `core/Graph`, `core/cost`, `core/UnionFind`, `data/circuits`, `engine/validator` | `core/BinaryHeap`, `engine/RaceEngine`, `EventScheduler`, `effects`, `rules`, `comparator`, `championship`, `data/raceEvents` |
+| **Experiments** | 1 BFS/DFS · 2 Dijkstra/A\* | 3 DP/Greedy · 4 Event priority queue · 5 Sorting and top-k |
+| **Frontend (screens)** | 1 Main Menu (3D garage) · 2 Track Explorer / Route Planner · 3 Racing Screen (3D race, HUD, cameras) | 4 Algorithm Lab · 5 Championship Dashboard (standings, podium, sort race) |
+| **Frontend (shared system)** | `render3d/` world: Stage, GarageView, RaceView, TrackWorld, CarModel · `styles/hud.css` | `styles/tokens.css`, `ui/components`, `ui/App`, `state/`, `render/` (2D fallback), Settings |
+| **Report sections** | §4 data model and cost normalisation · §5-§6 for A's algorithms · §8 experiments 1-2 | §3 architecture and game flow · §5-§6 for B's algorithms · §8 experiments 3-5 · §9 limitations |
+
+Details: [docs/01_PERSON_A_WORKPLAN.md](docs/01_PERSON_A_WORKPLAN.md) and [docs/02_PERSON_B_WORKPLAN.md](docs/02_PERSON_B_WORKPLAN.md). Every file is reviewed by the other member, because the viva covers the whole system.
 
 ---
 
@@ -43,18 +59,19 @@ To make this possible, each algorithm accepts an optional `trace`/`counters` obj
 
 ```
 src/
-  core/            # pure data types, Graph class, RNG, math/normalization  [A]
-  algorithms/      # BFS DFS Dijkstra A* DP Greedy Backtracking MST Heap Sorts [A]
-  engine/          # race loop, rules, fuel/nitro, opponents, event scheduler [A+B]
-  experiments/     # benchmark harness, 5 studies, CSV export               [A]
+  core/            # Graph, cost model, UnionFind [A] · BinaryHeap, RNG, types [B]
+  algorithms/      # BFS DFS Dijkstra A* MST Backtracking [A] · DP Greedy Sorts [B]
+  engine/          # validator [A] · race loop, fuel/nitro, events, comparator, championship [B]
+  experiments/     # exp1-2 [A] · exp3-5, harness [B]
   ui/
-    screens/       # the 5 screens                                          [B]
-    components/    # buttons, panels, HUD, graph overlay                    [B]
-    lab/           # algorithm step-through visualizer                      [B]
-  render/          # Canvas renderer, camera, sprites, animations           [B]
-  state/           # app state machine, navigation, save/load config        [B]
-  styles/          # CSS design system / theme                              [B]
-tests/             # Vitest unit + integration tests                        [A+B]
+    screens/       # MainMenu, TrackExplorer, Racing [A] · Dashboard [B]
+    components/    # shared HUD/panel components                            [B]
+    lab/           # Algorithm Lab                                          [B]
+  render3d/        # Stage, Garage, Race, Track, Car [A] · Podium [B]
+  render/          # 2D Canvas fallback renderers                           [B]
+  state/           # app state machine, settings, session                   [B]
+  styles/          # hud.css [A] · tokens.css [B]
+tests/             # each member owns the tests of their own algorithms (see work plans)
 docs/              # THIS PLAN
 assets/            # sprites, fonts, sounds (acknowledged in report)
 ```
@@ -70,10 +87,10 @@ The complete, frozen interface contracts (types, cost function, comparator, coun
 | File | Owner | Purpose |
 |---|---|---|
 | [docs/00_SHARED_CONTRACTS.md](docs/00_SHARED_CONTRACTS.md) | Both | Frozen types, cost model, the master comparator, counter interfaces. The contract between A and B. |
-| [docs/01_PERSON_A_ALGORITHMS.md](docs/01_PERSON_A_ALGORITHMS.md) | Person A | Phase-by-phase build of the algorithm core + engine logic + experiments. |
-| [docs/02_PERSON_B_GAME_UI.md](docs/02_PERSON_B_GAME_UI.md) | Person B | Phase-by-phase build of the 5 screens, renderer, visuals, game loop. |
+| [docs/01_PERSON_A_WORKPLAN.md](docs/01_PERSON_A_WORKPLAN.md) | Person A | Routing & Track: 6 algorithms, experiments 1-2, Menu / Track Explorer / Racing screen. |
+| [docs/02_PERSON_B_WORKPLAN.md](docs/02_PERSON_B_WORKPLAN.md) | Person B | Resources, Events & Standings: 6 algorithms, experiments 3-5, Algorithm Lab / Championship / design system. |
 | [docs/03_TESTING_AND_DEBUGGING.md](docs/03_TESTING_AND_DEBUGGING.md) | Both | Test matrix mapped to spec §9.1, debugging playbook, determinism guards. |
-| [docs/04_EXPERIMENTS.md](docs/04_EXPERIMENTS.md) | Person A (B assists charts) | The 5 required experiments, metrics, and report format. |
+| [docs/04_EXPERIMENTS.md](docs/04_EXPERIMENTS.md) | A: exp 1-2 · B: exp 3-5 | The 5 required experiments, metrics, and report format. |
 | [docs/05_TIMELINE_AND_INTEGRATION.md](docs/05_TIMELINE_AND_INTEGRATION.md) | Both | Day-by-day schedule, integration checkpoints, demo/viva/report prep. |
 | [docs/06_COST_MODEL_DEFENSE.md](docs/06_COST_MODEL_DEFENSE.md) | Person A | Justifies the normalization references & preset weights (report §4). Reproduced by `src/experiments/measure-refs.ts`. |
 
@@ -83,18 +100,18 @@ The complete, frozen interface contracts (types, cost function, comparator, coun
 
 Both developers move through the same 7 phases in lockstep so that integration happens continuously, not at the end. Each phase ends with an **integration checkpoint** where both branches merge and the acceptance tests pass.
 
-| Phase | Theme | Person A | Person B | Gate |
+| Phase | Theme | Person A (Routing & Track) | Person B (Resources, Events & Standings) | Gate |
 |---|---|---|---|---|
-| **0** | Setup & contracts | Repo, tooling, data types, Graph class, RNG | Repo, app shell, navigation, design system, 1 hardcoded circuit rendered | App boots; graph renders; CI green |
-| **1** | Act 1 — Reachability | BFS + DFS (+cycle/dead-end/components) | Track Explorer screen uses BFS/DFS results | Reachable checkpoints shown; unreachable handled |
-| **2** | Act 2 — Routing | Dijkstra + A\* + cost model | Route Planner: compare routes, presets, counters | Routes match; recompute on block |
-| **3** | Act 3 — Resources | DP (knapsack + refuel) + Greedy | Resource panel; Racing screen + game loop v1 | Plans feasible in-game; car drives a route |
-| **4** | Act 4 — Dynamics | Event heap + MST + Backtracking track-gen + opponents | Live events, HUD, 3 AI racers rendered | Deterministic events; closure reroutes mid-race |
-| **5** | Act 5 — Standings | Merge/Quick/Heap sort + Top-k | Dashboard, championship flow, scoring | 3 sorts agree; top-k == full-sort prefix |
-| **6** | Experiments + polish + **bonus** | 5 experiments + CSV | Algorithm Lab visualizer + visual polish + charts | Experiments reproduce; Lab = gameplay code |
-| **7** | Hardening | Report (algorithms/complexity), test coverage | Report (architecture/UI), packaging, demo script | ZIP builds; full race completes; viva-ready |
+| **0** | Setup & contracts | Graph, cost model, circuit 1, Stage + Garage scene | Types, RNG, BinaryHeap, tokens, app shell, state machine | App boots; menu renders in 3D; CI green |
+| **1** | Act 1 - Reachability | BFS + DFS (+cycles, dead ends, components) + Track Explorer screen | Instrumentation / trace format + Lab skeleton that replays traces | Reachable checkpoints shown; unreachable handled |
+| **2** | Act 2 - Routing | Dijkstra + A\* + checkpoint routing + route comparison and presets | Event scheduler (heap) + `RaceEngine` loop consuming A's routing | Routes match; displayed cost == optimised cost |
+| **3** | Act 3 - Resources | Racing screen: 3D cars, HUD, cameras | DP (knapsack, refuel, fuel-stop planner) + Greedy + fuel and station rules in the engine | Plans feasible in a real race; car drives a route |
+| **4** | Act 4 - Dynamics | Kruskal MST + Backtracking track generation + validator, circuits 2-3 + live-event visuals | Overlapping effects, nitro, DNF/recovery policy, opponents | Deterministic events; closure reroutes mid-race |
+| **5** | Act 5 - Standings | "Race this plan" hand-off into the race | Merge/Quick/Heap sort + top-k + Championship Dashboard and scoring | 3 sorts agree; top-k == full-sort prefix |
+| **6** | Experiments + polish + **bonus** | Experiments 1-2 + visual polish of menu / explorer / race | Experiments 3-5 + Algorithm Lab + charts | Experiments reproduce; Lab = gameplay code |
+| **7** | Hardening | Report sections 4, 5-6 (A's algorithms), 8 (exp 1-2) + demo script | Report sections 3, 5-6 (B's algorithms), 8 (exp 3-5), 9 + packaging | ZIP builds; full race completes; viva-ready |
 
-Detailed per-phase tasks, acceptance criteria, and tests are in each person's README and in `docs/05_TIMELINE_AND_INTEGRATION.md`.
+Scope, files and definition of done per member are in `docs/01_PERSON_A_WORKPLAN.md` and `docs/02_PERSON_B_WORKPLAN.md`; the day-by-day schedule is in `docs/05_TIMELINE_AND_INTEGRATION.md`.
 
 ---
 

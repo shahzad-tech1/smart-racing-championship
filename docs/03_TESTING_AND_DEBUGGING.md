@@ -12,9 +12,9 @@ Runner: **Vitest**. `npm test` must be green before any merge to `main` (CI enfo
 |---|---|---|---|
 | **Graph** | single vertex, disconnected, cyclic, branching, dead-end, directed, undirected | A | `tests/core/graph.test.ts` |
 | **Routing** | source=target, unreachable target, blocked edge, equal-cost paths, zero-weight edges, graph change during race | A | `tests/algorithms/routing.test.ts` |
-| **Resources** | insufficient fuel, full tank, unavailable station, capacity limit, zero-cost pickup, infeasible plan | A | `tests/algorithms/resources.test.ts` |
-| **Events** | simultaneous events, deterministic ties, cancellation, expiration, missing targets, overlapping effects | A | `tests/engine/events.test.ts` |
-| **Sorting** | empty, singleton, random, sorted, reverse-sorted, duplicate-heavy; same comparator | A | `tests/algorithms/sort.test.ts` |
+| **Resources** | insufficient fuel, full tank, unavailable station, capacity limit, zero-cost pickup, infeasible plan | B | `tests/algorithms/resources.test.ts` |
+| **Events** | simultaneous events, deterministic ties, cancellation, expiration, missing targets, overlapping effects | B | `tests/engine/events.test.ts` |
+| **Sorting** | empty, singleton, random, sorted, reverse-sorted, duplicate-heavy; same comparator | B | `tests/algorithms/sort.test.ts` |
 | **Integration** | complete race, multiple laps, ordered checkpoints, DNF, road closure, championship standings | A+B | `tests/integration/*.test.ts` |
 
 Every row above must have passing tests before Phase 7 ends. Treat the table as a checklist in the report's testing section.

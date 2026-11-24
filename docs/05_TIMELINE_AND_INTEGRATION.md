@@ -8,16 +8,16 @@ Dates are targets; the **phase gates** are the hard checkpoints. Keep `main` gre
 
 ## Day-by-day schedule
 
-| Days | Dates | Phase | Person A | Person B | Gate (merge to `main`) |
+| Days | Dates | Phase | Person A (Routing & Track) | Person B (Resources, Events & Standings) | Gate (merge to `main`) |
 |---|---|---|---|---|---|
-| 1–2 | Nov 21–22 | **0 Setup** | types, Graph, RNG, cost, instrumentation, circuit1 | app shell, state machine, canvas, GraphRenderer, design system | App boots + circuit1 renders + CI green |
-| 3–4 | Nov 23–24 | **1 Act 1** | BFS, DFS, bounded paths | Track Explorer screen | Reachable/unreachable shown; §5.1 tests pass |
-| 5–7 | Nov 25–27 | **2 Act 2** | Dijkstra, A\*, heap, checkpoint routing | Route Planner + presets + counters | Routes match; cost displayed==optimized |
-| 8–9 | Nov 28–29 | **3 Act 3** | Knapsack DP, refuel DP, greedy | Racing screen + game loop v1 + resource panel | Car drives a plan; recommendations feasible |
-| 10–12 | Nov 30–Dec 2 | **4 Act 4** | events/heap, MST, backtracking gen, validator, opponents, RaceEngine | opponents render, live events, reroute, circuits 2&3 | Deterministic full race with events |
-| 13 | Dec 3 (AM) | **5 Act 5** | sorts, top-k, championship aggregation | Dashboard + championship flow | 3 sorts agree; champion declared |
-| 14–15 | Dec 3 (PM)–Dec 4 | **6 Exp+Polish+Bonus** | 5 experiments + CSV + bonus data | Algorithm Lab + charts + visual polish | Experiments reproduce; Lab==gameplay |
-| 16–17 | Dec 4–5 | **7 Hardening** | report §5–6, coverage | report §3–4, build/package, screenshots, demo | ZIP builds; smoke checklist passes |
+| 1–2 | Nov 21–22 | **0 Setup** | Graph, cost, circuit1, Stage + Garage scene | types, RNG, BinaryHeap, instrumentation, app shell, state machine, design system | App boots + circuit1 renders + CI green |
+| 3–4 | Nov 23–24 | **1 Act 1** | BFS, DFS, bounded paths + Track Explorer screen | trace format + Lab skeleton | Reachable/unreachable shown; §5.1 tests pass |
+| 5–7 | Nov 25–27 | **2 Act 2** | Dijkstra, A\*, checkpoint routing + route comparison / presets | event scheduler (heap), RaceEngine loop | Routes match; cost displayed==optimized |
+| 8–9 | Nov 28–29 | **3 Act 3** | Racing screen (3D cars, HUD, cameras) | Knapsack DP, refuel DP, fuel-stop planner, greedy, fuel rules | Car drives a plan; recommendations feasible |
+| 10–12 | Nov 30–Dec 2 | **4 Act 4** | MST, backtracking generation, validator, circuits 2-3, live-event visuals | overlapping effects, nitro, DNF/recovery, opponents | Deterministic full race with events |
+| 13 | Dec 3 (AM) | **5 Act 5** | "Race this plan" hand-off | sorts, top-k, championship aggregation, Dashboard | 3 sorts agree; champion declared |
+| 14–15 | Dec 3 (PM)–Dec 4 | **6 Exp+Polish+Bonus** | experiments 1-2 + polish of menu / explorer / race | experiments 3-5 + Algorithm Lab + charts | Experiments reproduce; Lab==gameplay |
+| 16–17 | Dec 4–5 | **7 Hardening** | report §4, §5–6 (A's algorithms), §8 exp 1-2, demo script | report §3, §5–6 (B's algorithms), §8 exp 3-5, §9, build/package | ZIP builds; smoke checklist passes |
 
 > If a phase slips, protect the **mandatory core** (Phases 1–5). Cut from Phase 6 bonus and visual polish first, never from correctness or the 5 experiments.
 
@@ -63,13 +63,13 @@ Put bonus write-ups in report §9 ("advanced challenges completed").
 | Section | Owner |
 |---|---|
 | 1 Title page (group, section, reg numbers) | Both |
-| 2 Introduction & problem statement | B drafts |
+| 2 Introduction & problem statement | A drafts |
 | 3 System architecture & game flow | B |
-| 4 Graph/data models, assumptions, cost normalization, game rules | A (models/cost) + B (rules UI) |
-| 5 Algorithm design: pseudocode, structures, correctness, complexity | A |
-| 6 Integration: where each algorithm is invoked (algorithm→file→call-site table) | A |
+| 4 Graph/data models, assumptions, cost normalization, game rules | A (models/cost) + B (race rules, fuel and recovery policy) |
+| 5 Algorithm design: pseudocode, structures, correctness, complexity | A: BFS, DFS, Dijkstra, A*, MST, Backtracking; B: DP, Greedy, Heap/PQ, 3 sorts |
+| 6 Integration: where each algorithm is invoked (algorithm→file→call-site table) | each member, for their own six |
 | 7 Testing strategy, cases, results (use the §9.1 matrix) | Both |
-| 8 Five experiments with tables/charts + interpretation | A (B: charts) |
+| 8 Five experiments with tables/charts + interpretation | A: exp 1-2; B: exp 3-5 |
 | 9 Limitations, advanced challenges, future work | Both |
 | 10 Conclusion, references/acknowledgements (fonts, libraries, assets) | Both |
 

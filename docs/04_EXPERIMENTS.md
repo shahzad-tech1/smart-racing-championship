@@ -1,6 +1,6 @@
 # 04 — The Five Experimental Studies
 
-> Owner: **Person A** builds the harness + runs; **Person B** renders the charts (Phase 6).
+> Owners: **Person A** runs Experiments 1 (BFS/DFS) and 2 (Dijkstra/A*); **Person B** owns the harness and runs Experiments 3 (DP/Greedy), 4 (event priority queue) and 5 (sorting and top-k). Each member renders the charts for their own experiments.
 > Spec §7 requires 5 studies, each with: objective, hardware/software environment, input-generation method, dataset sizes, procedure, metrics, result table/chart, interpretation, limitations, conclusion. Keep theory separate from measured runtime; **never infer complexity from a single timing**.
 
 ---

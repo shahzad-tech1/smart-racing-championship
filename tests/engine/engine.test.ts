@@ -62,13 +62,26 @@ describe("RaceEngine", () => {
   it("reroutes around a mid-race road closure without restarting", () => {
     const blockage: ScheduledEvent = {
       eventId: 1, type: "RoadBlockage", triggerTime: 1, priority: 1,
-      targetEdgeOrVertex: 1 /* the 0->1 ring edge */, duration: 0,
+      targetEdgeOrVertex: 1 /* the 0->1 ring edge */, duration: 16, // a temporary closure, like the game's real events
     };
     const eng = new RaceEngine(buildCircuit1(), racers(), config(), [blockage]);
     eng.run();
     expect(eng.finished).toBe(true);
     // an alternative route to checkpoint 1 exists, so racers still finish
     expect(eng.results().some((r) => Number.isFinite(r.finishTime))).toBe(true);
+  });
+
+  it("a PERMANENT closure that makes the race unaffordable ends in a clean DNF, never a freeze or negative fuel", () => {
+    // closing the cheap 0->1 road for good needs ~11 fuel stops (exact search), so running dry is the documented outcome
+    const blockage: ScheduledEvent = { eventId: 1, type: "RoadBlockage", triggerTime: 1, priority: 1, targetEdgeOrVertex: 1, duration: 0 };
+    const eng = new RaceEngine(buildCircuit1(), racers(), config(), [blockage]);
+    let minFuel = Infinity;
+    while (!eng.finished) {
+      eng.tick();
+      for (const r of eng.state.racers) minFuel = Math.min(minFuel, r.fuelTenths);
+    }
+    expect(eng.finished).toBe(true);
+    expect(minFuel).toBeGreaterThanOrEqual(0);
   });
 
   it("records a DNF when the finish is unreachable (never freezes)", () => {

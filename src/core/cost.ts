@@ -57,8 +57,21 @@ export const REFS: NormalizationRefs = {
 export type EffectiveEdgeFn = (edge: Edge) => Edge;
 
 /**
+ * Speed cap of a Restricted road (spec §3.1: a Restricted edge stays traversable but its
+ * effective time/cost must reflect the restriction). Effective time = baseTime / cap, the
+ * same rule the SpeedRestriction event uses, so a restriction costs the same either way.
+ */
+export const RESTRICTED_SPEED_CAP = 0.5;
+
+/** The edge as drivers experience it: a Restricted road is slower; every other status is unchanged. */
+export function withRestriction(edge: Edge): Edge {
+  return edge.status === "Restricted" ? { ...edge, baseTime: edge.baseTime / RESTRICTED_SPEED_CAP } : edge;
+}
+
+/**
  * The single scalar cost of traversing one edge. Non-negative, so Dijkstra applies.
- * Pass `effectiveEdge` once the EffectLayer exists (Phase 4) to reflect restrictions.
+ * Pass `effectiveEdge` (the EffectLayer) to reflect temporary event effects; it must itself
+ * apply `withRestriction`. Without it, the Restricted status alone is still honoured.
  */
 export function edgeCost(
   edge: Edge,
@@ -66,7 +79,7 @@ export function edgeCost(
   refs: NormalizationRefs = REFS,
   effectiveEdge?: EffectiveEdgeFn,
 ): number {
-  const e = effectiveEdge ? effectiveEdge(edge) : edge;
+  const e = effectiveEdge ? effectiveEdge(edge) : withRestriction(edge);
   const D = e.distance / refs.maxDistance;
   const T = e.baseTime / refs.maxTime;
   const F = e.fuelCost / refs.maxFuel;

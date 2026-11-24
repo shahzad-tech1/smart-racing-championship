@@ -20,7 +20,7 @@ function walkTs(dir: string): string[] {
 const HEX_RE = /#[0-9a-fA-F]{3,8}\b/g;
 
 /** Allowed paths: everything outside src/ui, src/render, src/state, src/styles */
-function isPersonBFile(path: string): boolean {
+function isUiFile(path: string): boolean {
   const norm = path.replace(/\\/g, '/');
   return (
     norm.includes('/src/ui/') ||
@@ -29,11 +29,11 @@ function isPersonBFile(path: string): boolean {
   );
 }
 
-describe('token lint — no raw hex in Person B TypeScript files', () => {
+describe('token lint — no raw hex in UI / render / state TypeScript files', () => {
   const srcDir = fileURLToPath(new URL('../../src', import.meta.url));
-  const files = walkTs(srcDir).filter(isPersonBFile);
+  const files = walkTs(srcDir).filter(isUiFile);
 
-  it('found Person B source files to lint', () => {
+  it('found UI source files to lint', () => {
     expect(files.length).toBeGreaterThan(0);
   });
 

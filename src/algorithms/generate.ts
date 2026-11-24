@@ -18,6 +18,7 @@ import { Graph } from "../core/Graph";
 import type { Edge, Vertex } from "../core/types";
 import { makeRng, randInt, shuffle, type Rng } from "../core/rng";
 import { kruskalMST } from "./mst";
+import type { AlgoTrace } from "../core/instrumentation";
 import { validateCircuit } from "../engine/validator";
 import type { CircuitMeta } from "../data/circuits/meta";
 
@@ -39,8 +40,11 @@ export interface GeneratedCircuit {
 
 const DEFAULTS: GenParams = { checkpoints: 10, shortcuts: 2, maxRetries: 25, name: "Generated Circuit" };
 
-/** Backtracking: choose k ring-edge positions, pairwise non-adjacent (cyclically). */
-function placeObstacles(n: number, k: number, rng: Rng): number[] {
+/**
+ * Backtracking: choose k ring-edge positions, pairwise non-adjacent (cyclically).
+ * Optional `trace` records place / unplace / prune steps for the Algorithm Lab.
+ */
+export function placeObstacles(n: number, k: number, rng: Rng, trace?: AlgoTrace): number[] {
   const order = shuffle(rng, Array.from({ length: n }, (_, i) => i));
   const chosen: number[] = [];
   const ok = (p: number) => chosen.every((c) => c !== p && (c + 1) % n !== p && (p + 1) % n !== c);
@@ -48,10 +52,16 @@ function placeObstacles(n: number, k: number, rng: Rng): number[] {
     if (chosen.length === k) return true;
     if (idx >= order.length) return false;
     const p = order[idx]!;
+    if (trace) trace.counters.visitedVertices++;
     if (ok(p)) {
       chosen.push(p);
+      if (trace) trace.record({ kind: "place", index: p });
       if (bt(idx + 1)) return true;
       chosen.pop();
+      if (trace) trace.record({ kind: "unplace", index: p });
+    } else if (trace) {
+      trace.counters.examinedEdges++;
+      trace.record({ kind: "prune", index: p });
     }
     return bt(idx + 1);
   };

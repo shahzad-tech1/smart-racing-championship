@@ -53,10 +53,13 @@ Runs all five experiment scripts and writes CSV + JSON output to `experiments-ou
 
 | Library | Version | Purpose |
 |---|---|---|
+| three | ^0.170 | 3D rendering (garage, circuits, cars, podium). Loaded lazily; the only added runtime dependency |
 | Chart.js | ^4.4.6 | Experiment charts in Algorithm Lab |
 | Vite | ^5.4 | Build tool |
 | Vitest | ^2.1 | Test runner |
 | TypeScript | ^5.6 | Language |
+
+All 3D art is generated in code (geometry, canvas textures, shaders): there are no external model, texture or audio files to license or download. three.js is MIT-licensed.
 
 Fonts are loaded at runtime from Google Fonts (Big Shoulders Display, IBM Plex Sans, IBM Plex Mono). An internet connection is required for the first load; subsequent loads use the browser cache.
 
@@ -64,24 +67,33 @@ Fonts are loaded at runtime from Google Fonts (Big Shoulders Display, IBM Plex S
 
 ```
 src/
-  algorithms/   — Person A: BFS, DFS, Dijkstra, A*, DP, Greedy, MST, Backtracking, sorts
-  core/         — Person A: Graph, cost model, instrumentation, RNG, types
-  data/         — Person A: circuit fixtures and registry
-  engine/       — Person A: RaceEngine, comparator, effects, scheduler, rules, validator
-  experiments/  — Person A: five experiment harnesses
-  render/       — Person B: Canvas, Camera, GraphRenderer, RaceRenderer
-  state/        — Person B: AppStateMachine, Championship
-  styles/       — Person B: tokens.css (all CSS custom properties)
-  ui/           — Person B: App, screens, components, lab
-  main.ts       — Entry point (Person B)
+  algorithms/   — A: BFS, DFS, Dijkstra, A*, Kruskal MST, Backtracking | B: DP (knapsack, refuel, fuel plan), Greedy, sorts
+  core/         — A: Graph, cost model, UnionFind | B: BinaryHeap, instrumentation, RNG, types
+  data/         — A: circuit fixtures and registry | B: race events, starting grid
+  engine/       — A: validator | B: RaceEngine, comparator, effects, scheduler, rules, championship
+  experiments/  — A: exp 1-2 | B: exp 3-5, harness
+  render/       — B: Canvas, Camera, GraphRenderer, RaceRenderer (2D renderers, used as the fallback)
+  render3d/     — A: Stage, TrackWorld, CarModel, Garage/Race views, GraphOverlay | B: Podium view, ranking
+  state/        — B: AppStateMachine, Championship, Settings, session
+  styles/       — B: tokens.css (all CSS custom properties) | A: hud.css
+  ui/           — A: MainMenu, TrackExplorer, Racing | B: App, Dashboard, components, Algorithm Lab
+  main.ts       — Entry point (B)
+
+Work split: each member owns six algorithm families and a share of the frontend (README section 0.5).
 ```
 
 ## Screens
 
 | Screen | How to reach |
 |---|---|
-| Main Menu | Start page; shows circuit1 map |
-| Track Explorer | "Track explorer" from menu; click vertices to run BFS/DFS; switch to "Plan route" for Dijkstra |
-| Race | "Race" from menu; select circuit, then race |
-| Championship | "Championship" from menu; simulate races or run them live |
-| Algorithm Lab | "Algorithm lab" from menu; select an algorithm and step through its execution |
+| Main Menu | Start page: 3D garage, livery picker, Settings, Instructions |
+| Track Explorer | "Track explorer": pick a circuit, start and goal on the 3D track, replay BFS / DFS / Dijkstra / A* step by step |
+| Race | "Quick race": 3D race with HUD. `N` nitro, `C` or `1`-`4` cameras, `P` pause |
+| Championship | 3D podium. Race circuits yourself or "Simulate race" (same engine, no randomness) |
+| Algorithm Lab | 12 algorithms replayed from recorded traces; graph algorithms play out on the 3D circuit |
+
+## Settings and fallback
+
+Menu > Settings: quality (low / medium / high), weather (clear / rain), renderer (3D / 2D) and reduce motion. If WebGL is unavailable, or the renderer is set to 2D, Race and Track Explorer fall back to the original Canvas 2D screens. Rendering never feeds back into the simulation: results are identical in 2D and 3D.
+
+See `docs/07_3D_VISUAL_PLAN.md` for the design and architecture of the 3D layer.

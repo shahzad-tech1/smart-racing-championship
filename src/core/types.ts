@@ -1,6 +1,6 @@
 /**
  * src/core/types.ts — Frozen data model (see docs/00_SHARED_CONTRACTS.md §1–2).
- * This is the shared vocabulary between Person A (algorithms) and Person B (UI).
+ * This is the shared vocabulary between Person A and Person B (both own algorithms and frontend).
  * Do not change a type here without a changelog row in the contract doc.
  */
 
@@ -49,7 +49,10 @@ export type StrategyType =
   | "FixedMainRoute"
   | "ShortcutSeeker"
   | "MinDistance"
-  | "Human";
+  | "Human"
+  | "AStarRouter"
+  | "BFSRouter"
+  | "DFSRouter";
 
 export interface Racer {
   id: number;

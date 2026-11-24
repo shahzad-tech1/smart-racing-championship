@@ -25,6 +25,11 @@ export class BinaryHeap<T> {
     return this.data.length === 0;
   }
 
+  /** Read-only copy of the underlying array (heap order) — used by the Lab's heap view. */
+  snapshot(): T[] {
+    return this.data.slice();
+  }
+
   peek(): T | undefined {
     return this.data[0];
   }

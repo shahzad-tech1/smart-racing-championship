@@ -1,4 +1,5 @@
 import { AppStateMachine, type Screen } from '../state/AppState.ts';
+import { settings } from '../state/Settings.ts';
 
 interface Disposable {
   dispose(): void;
@@ -31,13 +32,25 @@ export class App {
         break;
       }
       case 'TrackExplorer': {
-        const { TrackExplorer } = await import('./screens/TrackExplorer.ts');
-        this._active = new TrackExplorer(this._root, this._state);
+        const { webglAvailable } = await import('../render3d/Stage.ts');
+        if (settings.current.renderer === '2d' || !webglAvailable()) {
+          const { TrackExplorerClassic } = await import('./screens/TrackExplorerClassic.ts');
+          this._active = new TrackExplorerClassic(this._root, this._state);
+        } else {
+          const { TrackExplorer } = await import('./screens/TrackExplorer.ts');
+          this._active = new TrackExplorer(this._root, this._state);
+        }
         break;
       }
       case 'Racing': {
-        const { Racing } = await import('./screens/Racing.ts');
-        this._active = new Racing(this._root, this._state);
+        const { webglAvailable } = await import('../render3d/Stage.ts');
+        if (settings.current.renderer === '2d' || !webglAvailable()) {
+          const { RacingClassic } = await import('./screens/RacingClassic.ts');
+          this._active = new RacingClassic(this._root, this._state);
+        } else {
+          const { Racing } = await import('./screens/Racing.ts');
+          this._active = new Racing(this._root, this._state);
+        }
         break;
       }
       case 'Dashboard': {

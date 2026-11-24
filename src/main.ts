@@ -1,4 +1,5 @@
 import './styles/tokens.css';
+import './styles/hud.css';
 import { App } from './ui/App.ts';
 
 // Google Fonts: Big Shoulders Display + IBM Plex Sans + IBM Plex Mono

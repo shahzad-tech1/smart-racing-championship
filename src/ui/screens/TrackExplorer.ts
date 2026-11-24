@@ -1,500 +1,501 @@
 import type { AppStateMachine } from '../../state/AppState.ts';
-import { CanvasWrapper } from '../../render/Canvas.ts';
-import { GraphRenderer } from '../../render/GraphRenderer.ts';
-import { tok } from '../../render/tokens.ts';
-import { buildCircuit1, CIRCUIT1_VERTICES, CIRCUIT1_META } from '../../data/circuits/circuit1.ts';
+import { CIRCUITS } from '../../data/circuits/index.ts';
 import { bfs } from '../../algorithms/bfs.ts';
 import { dfs } from '../../algorithms/dfs.ts';
 import { dijkstra } from '../../algorithms/dijkstra.ts';
+import { aStar, weightedHeuristic } from '../../algorithms/astar.ts';
 import { PRESETS, REFS, costFn, type PresetName } from '../../core/cost.ts';
-import { recordingTrace, type AlgoStep } from '../../core/instrumentation.ts';
+import { recordingTrace, type AlgoStep, type Counters } from '../../core/instrumentation.ts';
 import type { Graph } from '../../core/Graph.ts';
-import type { Vertex } from '../../core/types.ts';
-import { TimingRow } from '../components/TimingRow.ts';
-import { Button } from '../components/Button.ts';
+import type { PathResult } from '../../algorithms/pathTypes.ts';
+import { settings } from '../../state/Settings.ts';
+import { session } from '../../state/session.ts';
+import { Vector2, Vector3 } from 'three';
+import type { Stage } from '../../render3d/Stage.ts';
+import type { TrackWorld } from '../../render3d/TrackWorld.ts';
+import type { GraphOverlay } from '../../render3d/GraphOverlay.ts';
+import type { CarRig } from '../../render3d/CarModel.ts';
 
-type Mode = 'explore' | 'plan';
+type Algo = 'BFS' | 'DFS' | 'Dijkstra' | 'A*';
+const ALGOS: Algo[] = ['BFS', 'DFS', 'Dijkstra', 'A*'];
+const BLURB: Record<Algo, string> = {
+  BFS: 'Fewest roads, ignores distance. O(V+E).',
+  DFS: 'Walks as deep as it can first; finds cycles and components. O(V+E).',
+  Dijkstra: 'Cheapest route under the chosen cost preset. O((V+E) log V).',
+  'A*': 'Dijkstra steered by a Euclidean-based heuristic: same cost, fewer expansions.',
+};
 
-/** Build an admissible Euclidean heuristic for the weighted scalar cost. */
-export function makeHeuristic(graph: Graph, preset: PresetName): (vId: number, goalId: number) => number {
-  const minRatio = (() => {
-    let best = Infinity;
-    for (const e of graph.allEdges()) {
-      if (e.distance > 0) {
-        const c = costFn(PRESETS[preset], REFS)(e);
-        const r = c / e.distance;
-        if (r < best) best = r;
-      }
-    }
-    return isFinite(best) ? best : 0;
-  })();
-
-  return (vId: number, goalId: number): number => {
-    let vx = 0, vy = 0, gx = 0, gy = 0;
-    try {
-      const v = graph.getVertex(vId);
-      const g = graph.getVertex(goalId);
-      vx = v.x; vy = v.y; gx = g.x; gy = g.y;
-    } catch { return 0; }
-    const dist = Math.hypot(gx - vx, gy - vy);
-    return dist * minRatio;
-  };
+function edgesOfPath(g: Graph, path: number[]): number[] {
+  const out: number[] = [];
+  for (let i = 0; i + 1 < path.length; i++) {
+    const hops = g.neighbors(path[i]!, { ignoreBlocked: true }).filter((n) => n.to === path[i + 1]);
+    if (hops.length === 0) continue;
+    out.push(hops.reduce((a, b) => (b.edge.distance < a.edge.distance ? b : a)).edge.id);
+  }
+  return out;
 }
 
+function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, html?: string): HTMLElementTagNameMap[K] {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (html !== undefined) e.innerHTML = html;
+  return e;
+}
+
+/** 3D track explorer: pick start/goal on the circuit, replay BFS / DFS / Dijkstra / A* step by step. */
 export class TrackExplorer {
   readonly el: HTMLElement;
-  private _canvas: CanvasWrapper | null = null;
-  private _stopLoop: (() => void) | null = null;
-  private _graph: Graph;
-  private _mode: Mode = 'explore';
-  private _preset: PresetName = 'Balanced';
-  private _selectedVertices = new Set<number>();
-  private _reachableVertices = new Set<number>();
-  private _frontierVertices = new Set<number>();
-  private _highlightEdges = new Set<number>();
-  private _secondaryEdges = new Set<number>();
-  private _sidePanel!: HTMLElement;
-  private _countersEl!: HTMLElement;
-  private _explainSteps: AlgoStep[] = [];
-  private _explainIdx = 0;
-  private _explainPlaying = false;
-  private _explainTimer: ReturnType<typeof setInterval> | null = null;
+  private circuitIdx = 0;
+  private algo: Algo = 'Dijkstra';
+  private preset: PresetName = 'Balanced';
+  private graph!: Graph;
+  private start: number | null = null;
+  private goal: number | null = null;
+  private steps: AlgoStep[] = [];
+  private cursor = 0;
+  private playing = false;
+  private speed = 14; // steps per second
+  private acc = 0;
+  private result: PathResult | null = null;
+  private pathEdges: number[] = [];
+  private counters: Counters | null = null;
+  private extra = '';
+  private visited = new Set<number>();
+  private stage: Stage | null = null;
+  private world: TrackWorld | null = null;
+  private overlay: GraphOverlay | null = null;
+  private controls: { update(): boolean; target: Vector3; dispose(): void; enabled: boolean; autoRotate: boolean } | null = null;
+  private ghost: CarRig | null = null;
+  private ghostT = 0;
+  private downAt = new Vector2();
+  private disposed = false;
+  private building = false;
+
+  private stageHost!: HTMLElement;
+  private panel!: HTMLElement;
+  private info!: HTMLElement;
 
   constructor(container: HTMLElement, private app: AppStateMachine) {
-    this._graph = buildCircuit1();
-    this.el = document.createElement('div');
-    this.el.className = 'screen screen--menu';
-    this.el.style.cssText = 'display:flex;height:100%;overflow:hidden;flex-direction:column;';
+    this.el = el('div', 'screen');
+    this.el.style.cssText = 'height:100%;';
     container.appendChild(this.el);
-    this._build();
-  }
-
-  private _build(): void {
-    // Toolbar
-    const toolbar = this._buildToolbar();
-    this.el.appendChild(toolbar);
-
-    // Main area: canvas + side panel
-    const main = document.createElement('div');
-    main.style.cssText = 'flex:1;display:flex;min-height:0;';
-    this.el.appendChild(main);
-
-    // Canvas area
-    const canvasWrap = document.createElement('div');
-    canvasWrap.style.cssText = 'flex:1;position:relative;min-width:0;';
-    main.appendChild(canvasWrap);
-
-    // Side panel
-    this._sidePanel = document.createElement('aside');
-    this._sidePanel.style.cssText = `
-      width: 260px;
-      min-width: 220px;
-      border-left: 1px solid var(--ink-2);
-      padding: var(--gutter);
-      overflow-y: auto;
-      display: flex;
-      flex-direction: column;
-      gap: var(--gap-lg);
-    `;
-    main.appendChild(this._sidePanel);
-
-    // Counters strip
-    this._countersEl = document.createElement('div');
-    this._countersEl.style.cssText = `
-      padding: 0.375rem var(--gutter);
-      border-top: 1px solid color-mix(in srgb, var(--ink-2) 25%, transparent);
-      font-family: var(--font-mono);
-      font-size: var(--text-xs);
-      color: var(--ink-2);
-      text-align: right;
-    `;
-    this.el.appendChild(this._countersEl);
-
-    this._renderSidePanel();
-
-    requestAnimationFrame(() => {
-      this._startCanvas(canvasWrap);
+    const root = el('div', 'stage3d');
+    this.stageHost = el('div', 'stage3d__canvas');
+    const hud = el('div', 'hud');
+    this.panel = el('div', 'hud__chip hud__interactive');
+    this.panel.style.cssText = 'position:absolute;left:16px;top:60px;width:280px;max-height:calc(100% - 80px);overflow:auto;pointer-events:auto;';
+    this.info = el('div', 'hud__chip hud__interactive');
+    this.info.style.cssText = 'position:absolute;right:16px;top:14px;width:290px;max-height:calc(100% - 28px);overflow:auto;pointer-events:auto;';
+    const top = el('div', 'hud__top');
+    top.innerHTML = '<div class="hud__interactive" style="display:flex;gap:8px"><button class="hud__btn" data-act="menu">← Menu</button></div>';
+    top.addEventListener('click', (e) => {
+      if ((e.target as HTMLElement).closest('[data-act=menu]')) this.app.navigate('MainMenu');
     });
+    hud.append(top, this.panel, this.info);
+    root.append(this.stageHost, hud);
+    this.el.appendChild(root);
+    this.renderPanel();
+    this.renderInfo();
+    void this.mount();
   }
 
-  private _buildToolbar(): HTMLElement {
-    const bar = document.createElement('div');
-    bar.style.cssText = `
-      display: flex;
-      align-items: center;
-      gap: var(--gap);
-      padding: 0.5rem var(--gutter);
-      border-bottom: 1px solid color-mix(in srgb, var(--ink-2) 25%, transparent);
-      flex-wrap: wrap;
-    `;
-
-    // Back
-    const back = new Button({ label: '← Menu', onClick: () => this.app.navigate('MainMenu') });
-    back.el.style.marginRight = 'auto';
-    bar.appendChild(back.el);
-
-    // Mode toggle
-    const modeLabel = document.createElement('span');
-    modeLabel.style.cssText = 'font-size:var(--text-xs);color:var(--ink-2);';
-    modeLabel.textContent = 'Mode:';
-    bar.appendChild(modeLabel);
-
-    const seg = document.createElement('div');
-    seg.className = 'seg-control';
-
-    const modes: Array<{ label: string; value: Mode }> = [
-      { label: 'Explore', value: 'explore' },
-      { label: 'Plan route', value: 'plan' },
-    ];
-
-    for (const m of modes) {
-      const btn = document.createElement('button');
-      btn.className = 'seg-control__btn' + (this._mode === m.value ? ' seg-control__btn--active' : '');
-      btn.textContent = m.label;
-      btn.addEventListener('click', () => {
-        this._mode = m.value;
-        for (const b of seg.querySelectorAll('.seg-control__btn')) {
-          b.classList.remove('seg-control__btn--active');
-        }
-        btn.classList.add('seg-control__btn--active');
-        this._clearSelection();
-        this._renderSidePanel();
+  // ------------------------------------------------------------------ 3D
+  private async mount(): Promise<void> {
+    if (this.building) return;
+    this.building = true;
+    try {
+      const [{ Stage }, { TrackWorld }, { GraphOverlay }, { readTheme }, { OrbitControls }, { createCar }, { makeEnvironment }] = await Promise.all([
+        import('../../render3d/Stage.ts'),
+        import('../../render3d/TrackWorld.ts'),
+        import('../../render3d/GraphOverlay.ts'),
+        import('../../render3d/theme.ts'),
+        import('three/examples/jsm/controls/OrbitControls.js'),
+        import('../../render3d/CarModel.ts'),
+        import('../../render3d/procedural.ts'),
+      ]);
+      if (this.disposed) return;
+      this.teardown3d();
+      this.stageHost.innerHTML = '';
+      const def = CIRCUITS[this.circuitIdx]!;
+      this.graph = def.build();
+      const theme = readTheme();
+      const stage = new Stage(this.stageHost, { quality: settings.current.quality, bloom: 0.28, fov: 48, near: 0.5, far: 6000 });
+      const world = new TrackWorld(this.graph, { theme, quality: settings.current.quality, weather: 'clear', meta: def.meta, shadowExtent: 340 });
+      stage.scene.add(world.group);
+      stage.scene.fog = world.fog;
+      try { stage.scene.environment = makeEnvironment(stage.renderer); } catch { /* optional */ }
+      const overlay = new GraphOverlay(this.graph, world, theme);
+      stage.scene.add(overlay.group);
+      const ghost = createCar({ paint: theme.lime.clone(), accent: theme.cyan.clone(), flame: theme.nitro, number: 0 });
+      ghost.group.scale.setScalar(1.6);
+      ghost.group.visible = false;
+      stage.scene.add(ghost.group);
+      world.setViewport(stage.height, 48);
+      const b = world.bounds;
+      stage.camera.position.set(b.cx + b.size * 0.55, b.size * 0.75, b.cz + b.size * 0.85);
+      const controls = new OrbitControls(stage.camera, stage.renderer.domElement);
+      controls.target.set(b.cx, 0, b.cz);
+      controls.enableDamping = true;
+      controls.dampingFactor = 0.08;
+      controls.maxPolarAngle = Math.PI * 0.47;
+      controls.minDistance = 30;
+      controls.maxDistance = b.size * 2.2;
+      controls.autoRotate = !settings.reduceMotion;
+      controls.autoRotateSpeed = 0.35;
+      controls.update();
+      this.stage = stage;
+      this.world = world;
+      this.overlay = overlay;
+      this.ghost = ghost;
+      this.controls = controls as unknown as TrackExplorer['controls'];
+      const dom = stage.renderer.domElement;
+      dom.addEventListener('pointerdown', (e) => {
+        this.downAt.set(e.clientX, e.clientY);
+        if (this.controls) this.controls.autoRotate = false;
       });
-      seg.appendChild(btn);
-    }
-    bar.appendChild(seg);
-
-    // Preset (only relevant in plan mode)
-    const presetLabel = document.createElement('span');
-    presetLabel.style.cssText = 'font-size:var(--text-xs);color:var(--ink-2);';
-    presetLabel.textContent = 'Preset:';
-    bar.appendChild(presetLabel);
-
-    const presetSeg = document.createElement('div');
-    presetSeg.className = 'seg-control';
-    const presets: PresetName[] = ['Balanced', 'Speed', 'Economy', 'Safety'];
-    for (const p of presets) {
-      const btn = document.createElement('button');
-      btn.className = 'seg-control__btn' + (this._preset === p ? ' seg-control__btn--active' : '');
-      btn.textContent = p;
-      btn.addEventListener('click', () => {
-        this._preset = p;
-        for (const b of presetSeg.querySelectorAll('.seg-control__btn')) b.classList.remove('seg-control__btn--active');
-        btn.classList.add('seg-control__btn--active');
-        if (this._mode === 'plan' && this._selectedVertices.size >= 2) {
-          const [start, goal] = [...this._selectedVertices];
-          if (start !== undefined && goal !== undefined) this._runPlan(start, goal);
-        }
+      dom.addEventListener('pointerup', (e) => {
+        if (Math.hypot(e.clientX - this.downAt.x, e.clientY - this.downAt.y) > 5) return;
+        const r = dom.getBoundingClientRect();
+        const ndc = new Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+        const id = this.overlay?.pick(ndc, stage.camera);
+        if (id !== null && id !== undefined) this.onPick(id);
       });
-      presetSeg.appendChild(btn);
-    }
-    bar.appendChild(presetSeg);
-
-    return bar;
-  }
-
-  private _clearSelection(): void {
-    this._selectedVertices.clear();
-    this._reachableVertices.clear();
-    this._frontierVertices.clear();
-    this._highlightEdges.clear();
-    this._secondaryEdges.clear();
-    this._stopExplain();
-    this._countersEl.textContent = '';
-  }
-
-  private _renderSidePanel(): void {
-    this._sidePanel.innerHTML = '';
-
-    if (this._mode === 'explore') {
-      this._renderExploreSide();
-    } else {
-      this._renderPlanSide();
+      const tmpA = new Vector3();
+      const tmpD = new Vector3();
+      stage.onUpdate = (dt, t) => {
+        this.advance(dt);
+        controls.update();
+        world.sync(dt, t);
+        overlay.update(dt, t);
+        this.driveGhost(dt, t, tmpA, tmpD);
+        world.focusShadow(controls.target);
+      };
+      stage.start();
+      this.resetRun(true);
+    } catch {
+      this.stageHost.innerHTML = '<div class="hud__fallback"><div><h2 class="hud__num" style="font-size:2rem">3D view unavailable</h2><p>WebGL could not start. Pick the 2D renderer in Settings to use the classic explorer.</p></div></div>';
+    } finally {
+      this.building = false;
     }
   }
 
-  private _renderExploreSide(): void {
-    const h = document.createElement('h2');
-    h.style.cssText = 'font-size:var(--text-md);margin-bottom:var(--gap);';
-    h.textContent = 'Track explorer';
-    this._sidePanel.appendChild(h);
-
-    const instr = document.createElement('p');
-    instr.style.cssText = 'font-size:var(--text-xs);color:var(--ink-2);';
-    instr.textContent = 'Click a vertex to run BFS and show reachable vertices.';
-    this._sidePanel.appendChild(instr);
-
-    // Checkpoint rows
-    const cpHead = document.createElement('h3');
-    cpHead.style.cssText = 'font-size:var(--text-xs);color:var(--ink-2);margin-top:var(--gap-lg);text-transform:uppercase;letter-spacing:0.08em;';
-    cpHead.textContent = 'Checkpoints';
-    this._sidePanel.appendChild(cpHead);
-
-    const cpList = document.createElement('div');
-    cpList.setAttribute('role', 'list');
-    this._sidePanel.appendChild(cpList);
-
-    const checkpoints = CIRCUIT1_VERTICES.filter((v) => v.type === 'Checkpoint')
-      .sort((a, b) => (a.checkpointOrder ?? 0) - (b.checkpointOrder ?? 0));
-
-    for (const cp of checkpoints) {
-      const isReach = this._reachableVertices.has(cp.id);
-      const tr = new TimingRow({
-        position: cp.checkpointOrder ?? 0,
-        name: `Vertex ${cp.id}`,
-        status: this._selectedVertices.size === 0 ? 'pending' : isReach ? 'reached' : 'unreachable',
-      });
-      cpList.appendChild(tr.el);
-    }
-
-    // DFS info
-    if (this._selectedVertices.size > 0) {
-      const start = [...this._selectedVertices][0]!;
-      const dfsResult = dfs(this._graph, start);
-      const cycleInfo = document.createElement('p');
-      cycleInfo.style.cssText = 'font-size:var(--text-xs);margin-top:var(--gap);';
-      cycleInfo.textContent = dfsResult.hasCycle
-        ? '⚠ Cycle detected in graph'
-        : 'No cycle from this vertex';
-      this._sidePanel.appendChild(cycleInfo);
-
-      const compInfo = document.createElement('p');
-      compInfo.style.cssText = 'font-size:var(--text-xs);color:var(--ink-2);';
-      compInfo.textContent = `Components: ${dfsResult.components.length}`;
-      this._sidePanel.appendChild(compInfo);
-    }
-
-    // Explain button
-    if (this._explainSteps.length > 0) {
-      const explainBtn = new Button({
-        label: this._explainPlaying ? 'Pause' : 'Explain BFS',
-        onClick: () => this._toggleExplain(explainBtn),
-      });
-      explainBtn.el.style.marginTop = 'auto';
-      this._sidePanel.appendChild(explainBtn.el);
-    }
+  private teardown3d(): void {
+    this.controls?.dispose();
+    this.stage?.stop();
+    this.stage?.dispose();
+    this.stage = null;
+    this.world = null;
+    this.overlay = null;
+    this.controls = null;
+    this.ghost = null;
   }
 
-  private _renderPlanSide(): void {
-    const h = document.createElement('h2');
-    h.style.cssText = 'font-size:var(--text-md);margin-bottom:var(--gap);';
-    h.textContent = 'Route planner';
-    this._sidePanel.appendChild(h);
-
-    const instr = document.createElement('p');
-    instr.style.cssText = 'font-size:var(--text-xs);color:var(--ink-2);';
-    instr.textContent = 'Click two vertices to compare routes under different presets.';
-    this._sidePanel.appendChild(instr);
-
-    // Show route results if planned
-    if (this._selectedVertices.size >= 2) {
-      const [startId, goalId] = [...this._selectedVertices];
-      if (startId !== undefined && goalId !== undefined) {
-        this._renderRouteResults(startId, goalId);
-      }
-    } else {
-      const selInfo = document.createElement('p');
-      selInfo.style.cssText = 'font-size:var(--text-xs);color:var(--ink-2);margin-top:var(--gap);';
-      selInfo.textContent = `${this._selectedVertices.size}/2 vertices selected`;
-      this._sidePanel.appendChild(selInfo);
+  // ------------------------------------------------------------------ interaction
+  private onPick(id: number): void {
+    if (this.start === null || (this.start !== null && this.goal !== null)) {
+      this.start = id;
+      this.goal = null;
+    } else if (id !== this.start) {
+      this.goal = id;
     }
+    this.resetRun(false);
+    this.renderPanel();
   }
 
-  private _renderRouteResults(startId: number, goalId: number): void {
-    // Run Dijkstra for selected preset (primary route)
-    const cost = costFn(PRESETS[this._preset], REFS);
+  private needsGoal(): boolean {
+    return this.algo === 'Dijkstra' || this.algo === 'A*';
+  }
+
+  private canRun(): boolean {
+    return this.start !== null && (!this.needsGoal() || this.goal !== null);
+  }
+
+  /** Clear animation state; keep the selection. */
+  private resetRun(full: boolean): void {
+    if (full) {
+      this.start = null;
+      this.goal = null;
+    }
+    this.steps = [];
+    this.cursor = 0;
+    this.playing = false;
+    this.acc = 0;
+    this.result = null;
+    this.pathEdges = [];
+    this.counters = null;
+    this.extra = '';
+    this.visited.clear();
+    this.overlay?.reset();
+    if (this.start !== null) this.overlay?.setNode(this.start, 'start');
+    if (this.goal !== null) this.overlay?.setNode(this.goal, 'goal');
+    if (this.ghost) this.ghost.group.visible = false;
+    this.renderInfo();
+  }
+
+  /** Run the real algorithm once with a recording trace, then replay the recorded steps. */
+  private prepare(): void {
+    if (!this.canRun() || this.start === null) return;
+    const g = this.graph;
     const trace = recordingTrace();
-    const result = dijkstra(this._graph, startId, goalId, cost, trace);
-
-    // Run with another preset for comparison (always Balanced as secondary unless that's selected)
-    const altPreset: PresetName = this._preset === 'Balanced' ? 'Speed' : 'Balanced';
-    const altResult = dijkstra(this._graph, startId, goalId, costFn(PRESETS[altPreset], REFS));
-
-    // Update counters
-    this._countersEl.textContent =
-      `expanded ${trace.counters.visitedVertices} · relaxed ${trace.counters.relaxedEdges} · heap ops ${trace.counters.heapPushes + trace.counters.heapPops}`;
-
-    if (result.found) {
-      this._highlightEdges = new Set(result.edges);
-    }
-    if (altResult.found) {
-      this._secondaryEdges = new Set(altResult.edges);
-    }
-
-    // Route comparison list
-    const compHead = document.createElement('h3');
-    compHead.style.cssText = 'font-size:var(--text-xs);color:var(--ink-2);text-transform:uppercase;letter-spacing:0.08em;margin-top:var(--gap);';
-    compHead.textContent = 'Routes';
-    this._sidePanel.appendChild(compHead);
-
-    const routes: Array<{ label: string; res: typeof result }> = [
-      { label: `${this._preset} (primary)`, res: result },
-      { label: `${altPreset} (compare)`, res: altResult },
-    ];
-
-    for (const { label, res } of routes) {
-      const row = document.createElement('div');
-      row.style.cssText = `
-        display: flex;
-        justify-content: space-between;
-        align-items: baseline;
-        padding: 0.375rem 0;
-        border-bottom: 1px solid color-mix(in srgb, var(--ink-2) 25%, transparent);
-        font-size: var(--text-xs);
-      `;
-      const nameEl = document.createElement('span');
-      nameEl.textContent = label;
-      const valEl = document.createElement('span');
-      valEl.className = 'mono';
-      valEl.textContent = res.found ? res.cost.toFixed(3) : 'No path';
-      if (!res.found) valEl.style.color = 'var(--danger)';
-      row.append(nameEl, valEl);
-      this._sidePanel.appendChild(row);
-    }
-
-    if (!result.found) {
-      const errEl = document.createElement('p');
-      errEl.style.cssText = 'color:var(--danger);font-size:var(--text-xs);margin-top:var(--gap);';
-      errEl.setAttribute('role', 'alert');
-      errEl.textContent = `No route from vertex ${startId} to vertex ${goalId}. Try unblocking roads or selecting reachable vertices.`;
-      this._sidePanel.appendChild(errEl);
-    }
-  }
-
-  private _runExplore(startId: number): void {
-    const trace = recordingTrace();
-    const result = bfs(this._graph, startId, undefined, trace);
-    this._reachableVertices = result.reachable;
-    this._frontierVertices.clear();
-    this._explainSteps = trace.steps ?? [];
-    this._explainIdx = 0;
-
-    this._countersEl.textContent =
-      `visited ${trace.counters.visitedVertices} · examined edges ${trace.counters.examinedEdges}`;
-
-    this._renderSidePanel();
-  }
-
-  private _runPlan(_startId: number, _goalId: number): void {
-    this._highlightEdges.clear();
-    this._secondaryEdges.clear();
-    this._renderSidePanel();
-  }
-
-  private _onCanvasClick(sx: number, sy: number): void {
-    if (!this._canvas) return;
-    const { logicalWidth: w, logicalHeight: h, camera } = this._canvas;
-    const [wx, wy] = camera.screenToWorld(sx, sy, w, h);
-
-    // Find nearest vertex within snap radius
-    let best: Vertex | null = null;
-    let bestDist = Infinity;
-    const snapWorld = 20 / camera.zoom;
-
-    for (const v of this._graph.allVertices()) {
-      const d = Math.hypot(v.x - wx, v.y - wy);
-      if (d < snapWorld && d < bestDist) {
-        bestDist = d;
-        best = v;
-      }
-    }
-
-    if (!best) return;
-
-    if (this._mode === 'explore') {
-      this._clearSelection();
-      this._selectedVertices.add(best.id);
-      this._runExplore(best.id);
+    const cost = costFn(PRESETS[this.preset], REFS);
+    let res: PathResult | null = null;
+    this.extra = '';
+    if (this.algo === 'BFS') {
+      const r = bfs(g, this.start, this.goal ?? undefined, trace);
+      res = r.found ? { found: true, path: r.path, edges: edgesOfPath(g, r.path), cost: r.edgeCount } : null;
+      this.extra = `Reachable vertices: ${r.reachable.size}${r.found ? ` · ${r.edgeCount} roads (not cost-optimal)` : ''}`;
+    } else if (this.algo === 'DFS') {
+      const r = dfs(g, this.start, trace);
+      this.extra = `${r.hasCycle ? 'Cycle detected' : 'No cycle'} · ${r.components.length} component${r.components.length === 1 ? '' : 's'}`;
+    } else if (this.algo === 'Dijkstra') {
+      res = dijkstra(g, this.start, this.goal!, cost, trace);
     } else {
-      if (this._selectedVertices.size >= 2) {
-        this._clearSelection();
+      res = aStar(g, this.start, this.goal!, cost, weightedHeuristic(g, cost), trace);
+    }
+    if (this.needsGoal() && this.goal !== null) {
+      // honest comparison: the other algorithm on the same query
+      const other = recordingTrace();
+      if (this.algo === 'A*') dijkstra(g, this.start, this.goal, cost, other);
+      else aStar(g, this.start, this.goal, cost, weightedHeuristic(g, cost), other);
+      const mine = trace.counters.visitedVertices;
+      const theirs = other.counters.visitedVertices;
+      this.extra = `${this.algo} expanded ${mine} vertices · ${this.algo === 'A*' ? 'Dijkstra' : 'A*'} expanded ${theirs}`;
+    }
+    this.result = res;
+    this.steps = trace.steps ?? [];
+    this.counters = trace.counters;
+    this.cursor = 0;
+    this.visited.clear();
+    this.overlay?.reset();
+    if (this.start !== null) this.overlay?.setNode(this.start, 'start');
+    if (this.goal !== null) this.overlay?.setNode(this.goal, 'goal');
+    if (this.ghost && this.start !== null) this.moveGhostToVertex(this.start);
+    this.renderInfo();
+  }
+
+  private applyStep(s: AlgoStep): void {
+    const o = this.overlay;
+    if (!o) return;
+    switch (s.kind) {
+      case 'visit':
+        this.visited.add(s.vertex);
+        if (s.vertex !== this.start && s.vertex !== this.goal) o.setNode(s.vertex, 'visited');
+        this.moveGhostToVertex(s.vertex);
+        break;
+      case 'enqueue':
+        if (s.vertex !== this.start && s.vertex !== this.goal && !this.visited.has(s.vertex)) o.setNode(s.vertex, 'frontier');
+        break;
+      case 'relax':
+        o.setEdge(s.edge, 'considered');
+        if (s.to !== undefined && s.to !== this.start && s.to !== this.goal && !this.visited.has(s.to)) o.setNode(s.to, 'frontier');
+        break;
+      default:
+        break;
+    }
+  }
+
+  private moveGhostToVertex(v: number): void {
+    const ghost = this.ghost;
+    const world = this.world;
+    if (!ghost || !world) return;
+    const vert = this.graph.getVertex(v);
+    ghost.group.visible = true;
+    ghost.group.position.set(vert.x, 2, vert.y);
+  }
+
+  private finishRun(): void {
+    const o = this.overlay;
+    if (!o) return;
+    this.playing = false;
+    if (this.result?.found) {
+      this.pathEdges = this.result.edges;
+      for (const e of this.result.edges) o.setEdge(e, 'primary');
+      for (const v of this.result.path) if (v !== this.start && v !== this.goal) o.setNode(v, 'path');
+      this.ghostT = 0;
+      if (this.ghost) this.ghost.group.visible = true;
+    }
+    this.renderInfo();
+    this.renderPanel();
+  }
+
+  private advance(dt: number): void {
+    if (!this.playing) return;
+    this.acc += dt * this.speed;
+    let moved = false;
+    while (this.acc >= 1 && this.cursor < this.steps.length) {
+      this.acc -= 1;
+      this.applyStep(this.steps[this.cursor++]!);
+      moved = true;
+    }
+    if (moved) this.renderInfo();
+    if (this.cursor >= this.steps.length) this.finishRun();
+  }
+
+  private stepOnce(): void {
+    if (this.steps.length === 0) this.prepare();
+    if (this.cursor < this.steps.length) this.applyStep(this.steps[this.cursor++]!);
+    if (this.cursor >= this.steps.length && this.steps.length > 0) this.finishRun();
+    this.renderPanel();
+  }
+
+  private togglePlay(): void {
+    if (!this.canRun()) return;
+    if (this.steps.length === 0 || this.cursor >= this.steps.length) {
+      this.prepare();
+    }
+    this.playing = !this.playing;
+    this.renderPanel();
+  }
+
+  private driveGhost(dt: number, t: number, p: Vector3, d: Vector3): void {
+    const ghost = this.ghost;
+    const world = this.world;
+    if (!ghost || !world || !ghost.group.visible || !this.result?.found) return;
+    const path = this.result.path;
+    const edges = this.pathEdges;
+    if (edges.length === 0) return;
+    this.ghostT += dt * 0.55;
+    const total = edges.length;
+    const x = this.ghostT % total;
+    const i = Math.min(total - 1, Math.floor(x));
+    const edge = this.graph.getEdge(edges[i]!);
+    world.pointOnEdge(edge, path[i]!, x - i, 0, p, d);
+    ghost.group.position.copy(p);
+    ghost.group.rotation.y = Math.atan2(d.x, d.z);
+    ghost.update(dt, { speed: 24, steer: 0, brake: 0, nitro: 0, accel: 0, lateral: 0 }, t);
+  }
+
+  // ------------------------------------------------------------------ UI
+  private seg(key: string, opts: string[], cur: string): string {
+    return `<div class="seg" data-key="${key}" style="flex-wrap:wrap">${opts.map((o) => `<button type="button" data-v="${o}" aria-pressed="${o === cur}">${o}</button>`).join('')}</div>`;
+  }
+
+  private renderPanel(): void {
+    const sName = this.start === null ? '—' : `Vertex ${this.start}`;
+    const gName = this.goal === null ? (this.needsGoal() ? 'click a vertex' : 'optional') : `Vertex ${this.goal}`;
+    this.panel.innerHTML = `
+      <div class="hud__label">Circuit</div>
+      <div style="margin:6px 0 12px">${this.seg('circuit', CIRCUITS.map((c) => c.meta.name), CIRCUITS[this.circuitIdx]!.meta.name)}</div>
+      <div class="hud__label">Algorithm</div>
+      <div style="margin:6px 0 4px">${this.seg('algo', ALGOS, this.algo)}</div>
+      <p style="color:var(--ink-2);font-size:0.85rem;margin:6px 0 12px">${BLURB[this.algo]}</p>
+      ${this.needsGoal() ? `<div class="hud__label">Cost preset</div><div style="margin:6px 0 12px">${this.seg('preset', ['Balanced', 'Speed', 'Economy', 'Safety'], this.preset)}</div>` : ''}
+      <div class="hud__label">Start → goal</div>
+      <p style="margin:6px 0 12px"><b>${sName}</b> → <b>${gName}</b><br><span style="color:var(--ink-2);font-size:0.8rem">Click glowing markers on the track. Drag to orbit, scroll to zoom.</span></p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="hud__btn hud__btn--primary" data-act="play" ${this.canRun() ? '' : 'disabled'}>${this.playing ? 'Pause' : this.cursor > 0 && this.cursor < this.steps.length ? 'Resume' : 'Run'}</button>
+        <button class="hud__btn" data-act="step" ${this.canRun() ? '' : 'disabled'}>Step</button>
+        <button class="hud__btn" data-act="reset">Reset</button>
+      </div>
+      ${this.racePlanHtml()}
+      <div class="hud__label" style="margin-top:14px">Speed</div>
+      <div style="margin-top:6px">${this.seg('speed', ['Slow', 'Normal', 'Fast'], this.speed <= 6 ? 'Slow' : this.speed <= 16 ? 'Normal' : 'Fast')}</div>`;
+    this.panel.onclick = (e) => {
+      const b = (e.target as HTMLElement).closest('button') as HTMLElement | null;
+      if (!b) return;
+      const grp = b.closest('[data-key]') as HTMLElement | null;
+      if (grp) return this.onSeg(grp.dataset['key']!, b.dataset['v']!);
+      const act = b.dataset['act'];
+      if (act === 'play') this.togglePlay();
+      else if (act === 'step') this.stepOnce();
+      else if (act === 'reset') {
+        this.resetRun(true);
+        this.renderPanel();
+      } else if (act === 'raceplan') this.racePlan();
+    };
+  }
+
+  /** Only Dijkstra / A* produce a checkpoint-ordered, cost-optimal route the race engine can drive. */
+  private racePlanHtml(): string {
+    if (this.algo === 'Dijkstra' || this.algo === 'A*') {
+      return `<div style="margin-top:14px"><button class="hud__btn hud__btn--primary" data-act="raceplan" style="width:100%">Race this plan →</button>
+        <p style="color:var(--ink-2);font-size:0.78rem;margin:6px 0 0">Your car will be routed by ${this.algo} with the ${this.preset} cost, checkpoints in order.</p></div>`;
+    }
+    return `<p style="color:var(--ink-2);font-size:0.78rem;margin-top:14px">BFS and DFS explore the circuit. Pick Dijkstra or A* to race a plan.</p>`;
+  }
+
+  private racePlan(): void {
+    if (this.algo !== 'Dijkstra' && this.algo !== 'A*') return;
+    session.plan = { circuitId: CIRCUITS[this.circuitIdx]!.meta.id, algorithm: this.algo, preset: this.preset };
+    this.app.navigate('Racing');
+  }
+
+  private onSeg(key: string, v: string): void {
+    if (key === 'circuit') {
+      const i = CIRCUITS.findIndex((c) => c.meta.name === v);
+      if (i >= 0 && i !== this.circuitIdx) {
+        this.circuitIdx = i;
+        this.start = null;
+        this.goal = null;
+        this.resetRun(true);
+        void this.mount();
       }
-      this._selectedVertices.add(best.id);
-      if (this._selectedVertices.size === 2) {
-        const [startId, goalId] = [...this._selectedVertices];
-        if (startId !== undefined && goalId !== undefined) {
-          this._runPlan(startId, goalId);
-        }
-      } else {
-        this._renderSidePanel();
-      }
+    } else if (key === 'algo') {
+      this.algo = v as Algo;
+      this.resetRun(false);
+    } else if (key === 'preset') {
+      this.preset = v as PresetName;
+      this.resetRun(false);
+    } else if (key === 'speed') {
+      this.speed = v === 'Slow' ? 5 : v === 'Fast' ? 40 : 14;
+    }
+    this.renderPanel();
+  }
+
+  private describeStep(s: AlgoStep): string {
+    switch (s.kind) {
+      case 'visit': return `Visit vertex ${s.vertex}`;
+      case 'enqueue': return `Queue vertex ${s.vertex}`;
+      case 'relax': return `${s.improved ? 'Relax' : 'Skip'} edge ${s.edge}${s.g !== undefined ? ` (cost ${s.g.toFixed(2)})` : ''}`;
+      case 'pathFound': return `Path found — cost ${s.cost.toFixed(3)}`;
+      default: return 'Step';
     }
   }
 
-  private _toggleExplain(btn: Button): void {
-    if (this._explainPlaying) {
-      this._stopExplain();
-      btn.setLabel('Explain BFS');
-    } else {
-      this._explainPlaying = true;
-      btn.setLabel('Pause');
-      this._explainIdx = 0;
-      this._frontierVertices.clear();
-      this._explainTimer = setInterval(() => {
-        if (this._explainIdx >= this._explainSteps.length) {
-          this._stopExplain();
-          btn.setLabel('Explain BFS');
-          return;
-        }
-        const step = this._explainSteps[this._explainIdx++]!;
-        if (step.kind === 'visit') {
-          this._frontierVertices.add(step.vertex);
-        } else if (step.kind === 'enqueue') {
-          this._frontierVertices.add(step.vertex);
-        }
-      }, 80);
+  private renderInfo(): void {
+    const c = this.counters;
+    const r = this.result;
+    const progress = this.steps.length ? Math.round((this.cursor / this.steps.length) * 100) : 0;
+    const done = this.steps.length > 0 && this.cursor >= this.steps.length;
+    const ds = this.algo === 'BFS' ? 'FIFO queue' : this.algo === 'DFS' ? 'Stack' : 'Min-heap (priority queue)';
+    const complexity = BLURB[this.algo];
+    const lastStep = this.cursor > 0 ? this.steps[this.cursor - 1] : null;
+    let routeHtml = '';
+    if (r?.found && done) {
+      routeHtml = `<div class="hud__label" style="margin-top:12px">Route</div>
+        <div class="hud__num" style="font-size:1.6rem">${this.algo === 'BFS' ? `${r.cost} roads` : `cost ${r.cost.toFixed(3)}`}</div>
+        <div style="color:var(--ink-2);font-size:0.85rem;word-break:break-word">${r.path.join(' → ')}</div>`;
+    } else if (done && this.needsGoal()) {
+      routeHtml = '<p style="color:var(--danger);margin-top:12px" role="alert">No route between these vertices. A road may be blocked.</p>';
     }
-  }
-
-  private _stopExplain(): void {
-    this._explainPlaying = false;
-    if (this._explainTimer !== null) {
-      clearInterval(this._explainTimer);
-      this._explainTimer = null;
-    }
-  }
-
-  private _startCanvas(container: HTMLElement): void {
-    this._canvas = new CanvasWrapper(container);
-    const renderer = new GraphRenderer(this._canvas);
-
-    // Fit to circuit1 bounds
-    const xs = CIRCUIT1_VERTICES.map((v) => v.x);
-    const ys = CIRCUIT1_VERTICES.map((v) => v.y);
-    this._canvas.camera.fitBounds(
-      Math.min(...xs) - 20, Math.min(...ys) - 20,
-      Math.max(...xs) + 20, Math.max(...ys) + 20,
-      this._canvas.logicalWidth,
-      this._canvas.logicalHeight,
-    );
-
-    this._stopLoop = this._canvas.startLoop((cv) => {
-      cv.clear(tok('--paper'));
-      renderer.render(this._graph, {
-        highlightEdges: this._highlightEdges,
-        secondaryEdges: this._secondaryEdges,
-        selectedVertices: this._selectedVertices,
-        reachableVertices: this._reachableVertices,
-        frontierVertices: this._frontierVertices,
-        showGrid: true,
-      });
-    });
-
-    this._canvas.enablePanZoom();
-
-    // Click handler (after canvas is attached)
-    this._canvas.el.addEventListener('pointerup', (e) => {
-      if (e.button !== 0) return;
-      this._onCanvasClick(e.offsetX, e.offsetY);
-    });
+    this.info.innerHTML = `
+      <div class="hud__label">${this.algo}${this.start !== null ? ` · from ${this.start}` : ''}</div>
+      <div style="display:grid;grid-template-columns:auto 1fr;gap:2px 10px;font-size:0.82rem;margin:6px 0">
+        <span class="hud__label">Structure</span><span>${ds}</span>
+        <span class="hud__label">Complexity</span><span>${complexity}</span>
+      </div>
+      ${this.steps.length ? `<div class="hud__bar" style="margin:8px 0"><i style="width:${progress}%"></i></div>` : '<p style="color:var(--ink-2);margin:8px 0">Choose a start vertex, then run the algorithm. The car follows the exploration in real time.</p>'}
+      ${lastStep && !done ? `<div style="color:var(--lime);font-size:0.88rem;margin:4px 0">${this.describeStep(lastStep)}</div>` : ''}
+      ${c ? `<div class="hud__stats" style="flex-wrap:wrap">
+        <div><div class="hud__label">Expanded</div><div class="hud__num">${c.visitedVertices}</div></div>
+        <div><div class="hud__label">Edges</div><div class="hud__num">${c.examinedEdges || c.relaxedEdges}</div></div>
+        ${c.heapPushes ? `<div><div class="hud__label">Heap ops</div><div class="hud__num">${c.heapPushes + c.heapPops}</div></div>` : ''}</div>` : ''}
+      ${this.extra ? `<p style="margin-top:10px;font-size:0.9rem">${this.extra}</p>` : ''}
+      ${routeHtml}
+      <div class="hud__label" style="margin-top:14px">Legend</div>
+      <div style="display:grid;grid-template-columns:auto 1fr;gap:4px 8px;font-size:0.8rem;color:var(--ink-2);margin-top:6px">
+        <i class="hud__swatch" style="background:var(--lime);height:10px"></i>start / route / car
+        <i class="hud__swatch" style="background:var(--danger);height:10px"></i>goal
+        <i class="hud__swatch" style="background:var(--cyan);height:10px"></i>visited
+        <i class="hud__swatch" style="background:var(--warning);height:10px"></i>frontier / queued</div>`;
   }
 
   dispose(): void {
-    this._stopExplain();
-    this._stopLoop?.();
-    this._canvas?.dispose();
+    this.disposed = true;
+    this.teardown3d();
     this.el.remove();
   }
 }
 
-export { CIRCUIT1_META };
+
+

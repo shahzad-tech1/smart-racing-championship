@@ -15,7 +15,7 @@
  *
  * NOTE: full playability validation (ordered-checkpoint reachability, lap/return,
  * ≥2 alternative routes, feasible fuel plan) is the Phase-4 validator's job. This
- * fixture gives Person B real data to render and feeds `measure-refs`.
+ * fixture gives the 3D renderer real data to draw and feeds `measure-refs`.
  */
 
 import { Graph } from "../../core/Graph";

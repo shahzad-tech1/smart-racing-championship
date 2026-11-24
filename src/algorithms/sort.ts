@@ -17,24 +17,28 @@ import type { AlgoTrace } from "../core/instrumentation";
 
 type Cmp<T> = (x: T, y: T) => number;
 
-function swap<T>(a: T[], i: number, j: number): void {
+function swap<T>(a: T[], i: number, j: number, trace?: AlgoTrace): void {
+  if (trace && i !== j) trace.record({ kind: "swap", i, j });
   [a[i], a[j]] = [a[j]!, a[i]!];
 }
 
 /** Stable merge sort. Returns a new array. */
-export function mergeSort<T>(input: T[], cmp: Cmp<T>, trace?: AlgoTrace): T[] {
+export function mergeSort<T>(input: T[], cmp: Cmp<T>, trace?: AlgoTrace, offset = 0): T[] {
   if (input.length <= 1) return input.slice();
   const mid = input.length >> 1;
-  const left = mergeSort(input.slice(0, mid), cmp, trace);
-  const right = mergeSort(input.slice(mid), cmp, trace);
+  const left = mergeSort(input.slice(0, mid), cmp, trace, offset);
+  const right = mergeSort(input.slice(mid), cmp, trace, offset + mid);
 
   const out: T[] = [];
   let i = 0;
   let j = 0;
   while (i < left.length && j < right.length) {
-    if (trace) trace.counters.comparisons++;
+    if (trace) {
+      trace.counters.comparisons++;
+      // absolute positions in the array being sorted (left run at `offset`, right run at `offset+mid`)
+      trace.record({ kind: "compare", i: offset + i, j: offset + mid + j });
+    }
     if (cmp(left[i]!, right[j]!) <= 0) {
-      if (trace) trace.record({ kind: "compare", i, j });
       out.push(left[i]!);
       i++;
     } else {
@@ -44,6 +48,7 @@ export function mergeSort<T>(input: T[], cmp: Cmp<T>, trace?: AlgoTrace): T[] {
   }
   while (i < left.length) out.push(left[i++]!);
   while (j < right.length) out.push(right[j++]!);
+  if (trace) for (let k = 0; k < out.length; k++) trace.record({ kind: "write", index: offset + k, item: out[k] });
   return out;
 }
 
@@ -57,14 +62,17 @@ export function quickSort<T>(input: T[], cmp: Cmp<T>, trace?: AlgoTrace): T[] {
     let gt = hi;
     let i = lo;
     while (i <= gt) {
-      if (trace) trace.counters.comparisons++;
+      if (trace) {
+        trace.counters.comparisons++;
+        trace.record({ kind: "compare", i, j: lt });
+      }
       const c = cmp(a[i]!, pivot);
       if (c < 0) {
-        swap(a, lt, i);
+        swap(a, lt, i, trace);
         lt++;
         i++;
       } else if (c > 0) {
-        swap(a, i, gt);
+        swap(a, i, gt, trace);
         gt--;
       } else {
         i++;
@@ -89,22 +97,28 @@ export function heapSort<T>(input: T[], cmp: Cmp<T>, trace?: AlgoTrace): T[] {
       const r = 2 * i + 2;
       let largest = i;
       if (l < end) {
-        if (trace) trace.counters.comparisons++;
+        if (trace) {
+          trace.counters.comparisons++;
+          trace.record({ kind: "compare", i: l, j: largest });
+        }
         if (cmp(a[l]!, a[largest]!) > 0) largest = l;
       }
       if (r < end) {
-        if (trace) trace.counters.comparisons++;
+        if (trace) {
+          trace.counters.comparisons++;
+          trace.record({ kind: "compare", i: r, j: largest });
+        }
         if (cmp(a[r]!, a[largest]!) > 0) largest = r;
       }
       if (largest === i) break;
-      swap(a, i, largest);
+      swap(a, i, largest, trace);
       i = largest;
     }
   };
 
   for (let i = (n >> 1) - 1; i >= 0; i--) siftDown(i, n);
   for (let end = n - 1; end > 0; end--) {
-    swap(a, 0, end);
+    swap(a, 0, end, trace);
     siftDown(0, end);
   }
   return a;

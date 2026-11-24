@@ -65,7 +65,7 @@ export function dijkstra(
         if (trace) {
           trace.counters.relaxedEdges++;
           trace.counters.heapPushes++;
-          trace.record({ kind: "relax", edge: edge.id, improved: true });
+          trace.record({ kind: "relax", edge: edge.id, improved: true, to, g: nd });
         }
       }
     }
