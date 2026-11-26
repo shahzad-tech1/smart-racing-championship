@@ -53,8 +53,9 @@ describe('traces do not change results', () => {
 });
 
 describe('Algorithm Lab catalogue', () => {
-  it('lists 12 algorithms and every one runs the real implementation to a result', () => {
-    expect(ALGOS).toHaveLength(12);
+  it('lists every Lab algorithm and runs each real implementation to a result', () => {
+    // 12 mandatory algorithm families + the heap/priority-queue in its two roles (event scheduler, top-k)
+    expect(ALGOS).toHaveLength(14);
     const def = CIRCUITS[0]!;
     for (const a of ALGOS) {
       const run = runAlgo(a.id, def.build(), def.meta, 5);

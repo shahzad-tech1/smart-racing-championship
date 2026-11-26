@@ -599,11 +599,11 @@ describe("KNOWN GAPS vs Project.pdf (it.fails = requirement not met yet; fix it,
     expect(users.length).toBeGreaterThan(0);
   });
 
-  it.fails("§2.1 screen 4: the Algorithm Lab can step through the Heap / priority queue (event scheduler, top-k)", () => {
+  it("§2.1 screen 4: the Algorithm Lab can step through the Heap / priority queue (event scheduler, top-k)", () => {
     expect(ALGOS.some((a) => /priority queue|event (queue|scheduler|heap)|top-?k/i.test(a.name))).toBe(true);
   });
 
-  it.fails("§2.1 screen 4: every Lab entry runs on the CURRENT track / race data, not on invented sample data", () => {
+  it("§2.1 screen 4: every Lab entry runs on the CURRENT track / race data, not on invented sample data", () => {
     expect(ALGOS.filter((a) => a.sample).map((a) => a.id)).toEqual([]);
   });
 });
