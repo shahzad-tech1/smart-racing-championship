@@ -34,6 +34,8 @@ import { dijkstra } from "../algorithms/dijkstra";
 import { planCheckpointRoute, type RouteSolver } from "../algorithms/route";
 import { weightedHeuristic } from "../algorithms/astar";
 import { planFuelStops, type RoutePosition } from "../algorithms/fuelPlan";
+import { knapsack01, type Item } from "../algorithms/knapsack";
+import { greedyKnapsack } from "../algorithms/greedy";
 import type { EdgeCostFn } from "../algorithms/pathTypes";
 import { costFn, PRESETS, REFS, type PresetName } from "../core/cost";
 import { EffectLayer } from "./effects";
@@ -93,6 +95,8 @@ interface Runtime {
   status: Status;
   finishTime: number;
   refuelTarget: number | null;
+  /** Pickups this racer has already collected, so the planner never adds the same one to the route twice. */
+  collected: Set<number>;
   /** True once this racer has bought fuel at the station it currently stands on (one purchase per stop). */
   refuelledHere: boolean;
   /** Next station stop chosen by the fuel DP: arrive at route[routeIndex], then detour to `station`. */
@@ -186,6 +190,7 @@ export class RaceEngine {
         status: "racing",
         finishTime: Infinity,
         refuelTarget: null,
+        collected: new Set<number>(),
         refuelledHere: false,
         nextStop: null,
         planVersion: 0,
@@ -234,11 +239,16 @@ export class RaceEngine {
   // ---- planning ----
   private plan(rt: Runtime): void {
     const remaining = this.config.checkpointOrder.slice(rt.checkpointProgress);
+    // Optional nitro pickups chosen by the knapsack/greedy planner, inserted as waypoints BEFORE the
+    // mandatory checkpoints. They never reorder checkpoints (those stay in required order) and the fuel
+    // planner prices the whole route including the detour, so a pickup can never strand the car.
+    const firstWaypoint = remaining[0] ?? this.config.finishVertex;
+    const pickups = this.choosePickups(rt, firstWaypoint);
     const heuristic = rt.solver === 'astar' ? weightedHeuristic(this.g, rt.cost) : undefined;
     let plan = planCheckpointRoute(
       this.g,
       rt.currentVertex,
-      [...remaining],
+      [...pickups, ...remaining],
       this.config.finishVertex,
       rt.cost,
       undefined,
@@ -463,6 +473,55 @@ export class RaceEngine {
     if (station === null || !this.routeToStation(rt, station)) rt.status = "dnf";
   }
 
+  /**
+   * Pickup planner (spec §5.3, §6): choose which optional nitro pickups are worth adding to the route,
+   * using the 0/1 Knapsack DP — the SAME knapsack01 the Algorithm Lab shows. Each uncollected, reachable,
+   * cheap-to-reach pickup is an item: cost = extra fuel (whole units) to swing by it from the current
+   * position, benefit = the value of a nitro charge; the budget caps the total detour the racer will
+   * accept, and at most (MAX_NITRO - nitro) charges are useful. BFS/DFS/shortcut styles use the GREEDY
+   * heuristic instead of the DP, so greedy also drives real gameplay.
+   *
+   * The selected pickups are returned as extra WAYPOINTS (nearest first) to prepend to the checkpoint
+   * route. Because they go through the normal planCheckpointRoute + fuel-stop DP, the fuel planner sees
+   * the whole trip and schedules refuels for it — a pickup can never strand a car. AI only; the human
+   * collects by driving where they chose.
+   */
+  private choosePickups(rt: Runtime, nextWaypoint: number): number[] {
+    if (rt.isHuman || rt.nitro >= RULES.MAX_NITRO) return [];
+    const want = RULES.MAX_NITRO - rt.nitro;
+    const DETOUR_BUDGET_UNITS = 25; // willingness to spend fuel on pickups across this plan
+
+    const fuelCost: EdgeCostFn = (e) => fuelForEdge(this.layer.effectiveEdge(e));
+    const reach = new Map<number, number>(); // pickup id -> one-way fuel (tenths) from current position
+    const items: Item[] = [];
+    for (const v of this.g.allVertices()) {
+      if (v.type !== "NitroPickup" || !v.active || v.id === rt.currentVertex) continue;
+      if (rt.collected.has(v.id)) continue;
+      const go = dijkstra(this.g, rt.currentVertex, v.id, fuelCost);
+      if (!go.found) continue;
+      // extra fuel to swing by the pickup vs. going straight to the next waypoint
+      const straight = dijkstra(this.g, rt.currentVertex, nextWaypoint, fuelCost);
+      const viaPickup = dijkstra(this.g, v.id, nextWaypoint, fuelCost);
+      if (!viaPickup.found) continue;
+      const extra = go.cost + viaPickup.cost - (straight.found ? straight.cost : 0);
+      const costUnits = Math.max(1, Math.ceil(extra / 10));
+      if (costUnits > DETOUR_BUDGET_UNITS) continue;
+      reach.set(v.id, go.cost);
+      items.push({ id: v.id, cost: costUnits, benefit: 10 });
+    }
+    if (items.length === 0) return [];
+
+    const useGreedy =
+      rt.strategyType === "ShortcutSeeker" || rt.strategyType === "BFSRouter" || rt.strategyType === "DFSRouter";
+    const chosen = useGreedy ? greedyKnapsack(items, DETOUR_BUDGET_UNITS) : knapsack01(items, DETOUR_BUDGET_UNITS);
+
+    // keep at most `want` charges, nearest-first so the inserted detour stays short
+    return chosen.selected
+      .slice()
+      .sort((a, b) => (reach.get(a) ?? 0) - (reach.get(b) ?? 0))
+      .slice(0, want);
+  }
+
   // ---- events ----
   private processEvents(): void {
     // drop expired temporary effects; the graph is re-derived below if anything changed
@@ -645,9 +704,10 @@ export class RaceEngine {
       return;
     }
 
-    // nitro pickup
+    // nitro pickup (collected by driving through it; the knapsack planner put it on the route)
     if (v.type === "NitroPickup" && v.active && rt.nitro < RULES.MAX_NITRO) {
       rt.nitro++;
+      rt.collected.add(v.id);
     }
 
     // AI nitro usage: fire one charge at the start of a fresh lap (fuel is at its highest)
