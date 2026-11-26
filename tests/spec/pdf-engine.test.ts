@@ -573,7 +573,7 @@ describe("PDF §2.3 — the player's planned route drives the player's car", () 
 // ================================================================== PART 4 — KNOWN GAPS
 
 describe("KNOWN GAPS vs Project.pdf (it.fails = requirement not met yet; fix it, then change to `it`)", () => {
-  it.fails("§4.1 / §5.3: racers actually collect nitro pickups during a standard race on at least one circuit", () => {
+  it("§4.1 / §5.3: racers actually collect nitro pickups during a standard race on at least one circuit", () => {
     let collected = false;
     for (const def of CIRCUITS) {
       const g = def.build();
@@ -589,7 +589,7 @@ describe("KNOWN GAPS vs Project.pdf (it.fails = requirement not met yet; fix it,
     expect(collected).toBe(true);
   });
 
-  it.fails("§2.3 / §5.3 / §6: the DP/Greedy/refuel planner is called by gameplay code (not only by the Lab and experiments)", () => {
+  it("§2.3 / §5.3 / §6: the DP/Greedy/refuel planner is called by gameplay code (not only by the Lab and experiments)", () => {
     const users: string[] = [];
     for (const dir of ["ui/screens", "engine", "state", "render3d", "data"]) {
       for (const f of walk(resolve(SRC, dir))) {
