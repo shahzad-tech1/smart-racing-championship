@@ -8,19 +8,23 @@ import { dfs } from '../../algorithms/dfs.ts';
 import { dijkstra } from '../../algorithms/dijkstra.ts';
 import { aStar, weightedHeuristic } from '../../algorithms/astar.ts';
 import { kruskalMST, mstWeight } from '../../algorithms/mst.ts';
-import { mergeSort, quickSort, heapSort } from '../../algorithms/sort.ts';
+import { mergeSort, quickSort, heapSort, topK } from '../../algorithms/sort.ts';
 import { knapsack01, type Item } from '../../algorithms/knapsack.ts';
 import { greedyKnapsack } from '../../algorithms/greedy.ts';
 import { refuelDP } from '../../algorithms/refuel.ts';
 import { placeObstacles } from '../../algorithms/generate.ts';
+import { planCheckpointRoute } from '../../algorithms/route.ts';
 import { recordingTrace, type AlgoStep, type Counters } from '../../core/instrumentation.ts';
 import { costFn, PRESETS, REFS } from '../../core/cost.ts';
 import { makeRng } from '../../core/rng.ts';
 import type { Graph } from '../../core/Graph.ts';
 import type { CircuitMeta } from '../../data/circuits/meta.ts';
+import { EventScheduler } from '../../engine/EventScheduler.ts';
+import { RULES, fuelForEdge } from '../../engine/rules.ts';
+import { buildRaceEvents } from '../../data/raceEvents.ts';
 
 export type Kind = 'graph' | 'array' | 'dp' | 'backtrack' | 'refuel';
-export type Group = 'Graph search' | 'Shortest path' | 'Spanning tree' | 'Sorting' | 'Dynamic programming & greedy' | 'Backtracking';
+export type Group = 'Graph search' | 'Shortest path' | 'Spanning tree' | 'Sorting' | 'Dynamic programming & greedy' | 'Backtracking' | 'Priority queues';
 
 export interface AlgoDef {
   id: string;
@@ -40,13 +44,15 @@ export const ALGOS: AlgoDef[] = [
   { id: 'dijkstra', name: 'Dijkstra', group: 'Shortest path', kind: 'graph', time: 'O((V+E) log V)', space: 'O(V)', blurb: 'Always expands the cheapest unsettled vertex from a min-heap. Optimal for non-negative costs.', sample: false },
   { id: 'astar', name: 'A*', group: 'Shortest path', kind: 'graph', time: 'O(E) typical, O(b^d) worst', space: 'O(V)', blurb: 'Dijkstra steered toward the goal by an admissible heuristic: same optimal cost, fewer expansions.', sample: false },
   { id: 'kruskal', name: 'Kruskal MST', group: 'Spanning tree', kind: 'graph', time: 'O(E log E)', space: 'O(V)', blurb: 'Sorts roads by length and keeps each one that joins two separate components (union-find).', sample: false },
-  { id: 'merge', name: 'Merge sort', group: 'Sorting', kind: 'array', time: 'O(n log n)', space: 'O(n)', blurb: 'Splits, sorts halves, merges. Stable, so tied drivers keep their order.', sample: true },
-  { id: 'quick', name: 'Quick sort', group: 'Sorting', kind: 'array', time: 'O(n log n) avg · O(n²) worst', space: 'O(log n)', blurb: 'Partitions around a pivot, then recurses on each side.', sample: true },
-  { id: 'heap', name: 'Heap sort', group: 'Sorting', kind: 'array', time: 'O(n log n)', space: 'O(1)', blurb: 'Builds a max-heap, then repeatedly moves the largest to the end.', sample: true },
-  { id: 'knapsack', name: '0/1 Knapsack (DP)', group: 'Dynamic programming & greedy', kind: 'dp', time: 'O(m·B)', space: 'O(m·B)', blurb: 'Fills a table dp[item][budget] bottom-up; always finds the best-value selection.', sample: true },
-  { id: 'greedy', name: 'Greedy knapsack', group: 'Dynamic programming & greedy', kind: 'dp', time: 'O(m log m)', space: 'O(m)', blurb: 'Picks by benefit/cost ratio. Fast, but can miss the optimum the DP finds.', sample: true },
-  { id: 'refuel', name: 'Refuel planner (DP)', group: 'Dynamic programming & greedy', kind: 'refuel', time: 'O(m·C·P)', space: 'O(m·C)', blurb: 'Chooses how much fuel to buy at each station to finish with the fewest stop-seconds.', sample: true },
-  { id: 'backtrack', name: 'Backtracking: obstacles', group: 'Backtracking', kind: 'backtrack', time: 'O(n!) worst, pruned', space: 'O(k)', blurb: 'Places k obstacles on ring roads so none are adjacent; undoes a placement when it dead-ends.', sample: true },
+  { id: 'merge', name: 'Merge sort', group: 'Sorting', kind: 'array', time: 'O(n log n)', space: 'O(n)', blurb: 'Sorts this circuit’s road lengths. Stable, so equal values keep their order.', sample: false },
+  { id: 'quick', name: 'Quick sort', group: 'Sorting', kind: 'array', time: 'O(n log n) avg · O(n²) worst', space: 'O(log n)', blurb: 'Sorts this circuit’s road lengths by partitioning around a pivot.', sample: false },
+  { id: 'heap', name: 'Heap sort', group: 'Sorting', kind: 'array', time: 'O(n log n)', space: 'O(1)', blurb: 'Sorts this circuit’s road lengths with an in-place max-heap.', sample: false },
+  { id: 'knapsack', name: '0/1 Knapsack (DP)', group: 'Dynamic programming & greedy', kind: 'dp', time: 'O(m·B)', space: 'O(m·B)', blurb: 'Chooses which of the circuit’s shortcuts and pickups to take within a fuel budget — the best-value set.', sample: false },
+  { id: 'greedy', name: 'Greedy knapsack', group: 'Dynamic programming & greedy', kind: 'dp', time: 'O(m log m)', space: 'O(m)', blurb: 'Picks the same circuit options by benefit/cost ratio — fast, but can miss the DP optimum.', sample: false },
+  { id: 'refuel', name: 'Refuel planner (DP)', group: 'Dynamic programming & greedy', kind: 'refuel', time: 'O(m·C·P)', space: 'O(m·C)', blurb: 'Plans fuel buys along this circuit’s checkpoint route to finish with the fewest stop-seconds.', sample: false },
+  { id: 'backtrack', name: 'Backtracking: obstacles', group: 'Backtracking', kind: 'backtrack', time: 'O(n!) worst, pruned', space: 'O(k)', blurb: 'Places obstacles on this circuit’s ring roads so none are adjacent; backtracks on a dead-end.', sample: false },
+  { id: 'events', name: 'Event priority queue (min-heap)', group: 'Priority queues', kind: 'array', time: 'O(log n) per op', space: 'O(n)', blurb: 'Schedules this race’s events in a min-heap and fires them in (time, priority, sequence) order.', sample: false },
+  { id: 'topk', name: 'Top-K (size-k heap)', group: 'Priority queues', kind: 'array', time: 'O(n log k)', space: 'O(k)', blurb: 'Keeps the K shortest roads with a size-k heap — the same retrieval that builds the podium top-3.', sample: false },
 ];
 
 export interface Run {
@@ -82,6 +88,54 @@ export function sampleItems(seed: number): { items: Item[]; budget: number } {
   const r = makeRng(seed);
   const items: Item[] = Array.from({ length: 7 }, (_, i) => ({ id: i + 1, cost: 2 + Math.floor(r() * 7), benefit: 5 + Math.floor(r() * 30) }));
   return { items, budget: 16 };
+}
+
+/** The current circuit's road lengths, scaled to [8,98] for the array panels. */
+export function trackValues(graph: Graph): number[] {
+  const d = graph.allEdges().map((e) => e.distance);
+  const lo = Math.min(...d);
+  const hi = Math.max(...d);
+  const span = hi - lo || 1;
+  return d.map((x) => 8 + Math.round(((x - lo) / span) * 90));
+}
+
+/** Optional on-track choices (shortcuts + nitro pickups) modelled as 0/1 knapsack items. */
+function trackItems(graph: Graph): { items: Item[]; budget: number } {
+  const items: Item[] = [];
+  let id = 1;
+  for (const e of graph.allEdges()) {
+    if (!e.isShortcut) continue;
+    items.push({ id: id++, cost: Math.min(40, Math.max(1, Math.round(fuelForEdge(e) / 10))), benefit: Math.max(1, Math.round(e.distance / 8)) });
+  }
+  for (const v of graph.allVertices()) {
+    if (v.type !== 'NitroPickup') continue;
+    const spur = graph.neighbors(v.id, { ignoreBlocked: true })[0];
+    const cost = spur ? Math.min(40, Math.max(1, Math.round(fuelForEdge(spur.edge) / 10))) : 4;
+    items.push({ id: id++, cost, benefit: 12 }); // a nitro charge
+  }
+  if (items.length === 0) items.push({ id: 1, cost: 3, benefit: 10 }); // never empty
+  const total = items.reduce((s, it) => s + it.cost, 0);
+  const maxItem = items.reduce((m, it) => Math.max(m, it.cost), 1);
+  return { items, budget: Math.max(maxItem, Math.round(total * 0.55)) };
+}
+
+/** Fuel needed on each road of the circuit's checkpoint route, and which arrivals are at stations. */
+function trackRefuel(graph: Graph, meta: CircuitMeta): {
+  legFuel: number[]; stations: boolean[]; capacity: number; startFuel: number; maxPurchase: number; stopTime: number;
+} {
+  const plan = planCheckpointRoute(graph, meta.startVertex, [...meta.checkpointOrder], meta.finishVertex, costFn(PRESETS.Balanced, REFS));
+  const edges = plan.found && plan.edges.length ? plan.edges : graph.allEdges().slice(0, 6).map((e) => e.id);
+  const path = plan.found ? plan.path : [];
+  const legFuel = edges.map((eid) => fuelForEdge(graph.getEdge(eid)));
+  const stations = edges.map((_eid, i) => {
+    const vid = path[i];
+    return vid !== undefined && graph.getVertex(vid).type === 'FuelStation';
+  });
+  return {
+    legFuel, stations,
+    capacity: RULES.MAX_FUEL_TENTHS, startFuel: RULES.MAX_FUEL_TENTHS,
+    maxPurchase: RULES.FUEL_STATION_MAX_PURCHASE_TENTHS, stopTime: RULES.FUEL_STATION_STOP_TIME,
+  };
 }
 
 function describe(s: AlgoStep): string {
@@ -140,18 +194,47 @@ export function runAlgo(id: string, graph: Graph, meta: CircuitMeta, seed: numbe
     case 'merge':
     case 'quick':
     case 'heap': {
-      const arr = sampleNumbers(28, seed);
+      const arr = trackValues(graph);
       const cmp = (a: number, b: number): number => a - b;
       const out = id === 'merge' ? mergeSort([...arr], cmp, trace) : id === 'quick' ? quickSort([...arr], cmp, trace) : heapSort([...arr], cmp, trace);
-      return base({ data: { arr, sorted: out }, summary: `${trace.counters.comparisons} comparisons`, result: `Sorted ${arr.length} values in ${trace.counters.comparisons} comparisons` });
+      return base({ data: { arr, sorted: out }, summary: `${trace.counters.comparisons} comparisons`, result: `Sorted ${arr.length} road lengths in ${trace.counters.comparisons} comparisons` });
+    }
+    case 'topk': {
+      const values = trackValues(graph);
+      const k = Math.min(6, Math.max(2, Math.floor(values.length / 4)));
+      const res = topK(values, k, (a, b) => a - b, trace);
+      return base({ data: { arr: values, sorted: res }, summary: `top ${k} of ${values.length}`, result: `${k} shortest roads: ${res.join(', ')}` });
+    }
+    case 'events': {
+      const built = buildRaceEvents(graph, meta);
+      const list = built.length
+        ? built
+        : graph.allEdges().filter((e) => e.isShortcut).map((e, i) => ({ eventId: i + 1, type: 'RoadBlockage' as const, triggerTime: (i + 1) * 5, priority: (i % 6) + 1, targetEdgeOrVertex: e.id, duration: 0 }));
+      const sched = new EventScheduler();
+      const steps: AlgoStep[] = [];
+      for (const e of list) { sched.schedule(e); steps.push({ kind: 'enqueue', vertex: e.eventId }); }
+      const fired = sched.popDue(Infinity);
+      for (const e of fired) steps.push({ kind: 'visit', vertex: e.eventId });
+      trace.counters.heapPushes = list.length;
+      trace.counters.heapPops = fired.length;
+      const ts = list.map((e) => e.triggerTime);
+      const lo = Math.min(...ts); const span = (Math.max(...ts) - lo) || 1;
+      const scale = (t: number): number => 8 + Math.round(((t - lo) / span) * 90);
+      return base({
+        steps,
+        data: { arr: list.map((e) => scale(e.triggerTime)), sorted: fired.map((e) => scale(e.triggerTime)) },
+        summary: `${list.length} events scheduled`,
+        result: `Fired in order: ${fired.map((e) => `#${e.eventId}@${e.triggerTime}s`).join(' → ')}`,
+        log: (st) => (st.kind === 'enqueue' ? `schedule event #${st.vertex}` : st.kind === 'visit' ? `fire event #${st.vertex}` : describe(st)),
+      });
     }
     case 'knapsack': {
-      const { items, budget } = sampleItems(seed);
+      const { items, budget } = trackItems(graph);
       const r = knapsack01(items, budget, trace);
       return base({ data: { items, budget, selected: r.selected, value: r.value }, summary: `${trace.counters.dpStatesComputed} states`, result: `Best value ${r.value} using items ${r.selected.join(', ') || 'none'}` });
     }
     case 'greedy': {
-      const { items, budget } = sampleItems(seed);
+      const { items, budget } = trackItems(graph);
       const g = greedyKnapsack(items, budget, trace);
       const opt = knapsack01(items, budget);
       const order = [...items].filter((i) => i.cost > 0).sort((a, b) => b.benefit / b.cost - a.benefit / a.cost || a.id - b.id);
@@ -164,24 +247,23 @@ export function runAlgo(id: string, graph: Graph, meta: CircuitMeta, seed: numbe
       });
     }
     case 'refuel': {
-      const r = makeRng(seed);
-      const legFuel = Array.from({ length: 6 }, () => 80 + Math.floor(r() * 120));
-      const stations = [false, true, false, true, true, false];
-      const params = { legFuel, capacity: 400, startFuel: 150, stations, maxPurchase: 300, stopTime: 4 };
+      const params = trackRefuel(graph, meta);
       const res = refuelDP(params, trace);
       return base({
-        steps: legFuel.map((_, i) => ({ kind: 'visit', vertex: i }) as AlgoStep),
+        steps: params.legFuel.map((_, i) => ({ kind: 'visit', vertex: i }) as AlgoStep),
         data: { ...params, result: res },
         summary: `${trace.counters.dpStatesComputed} states`,
-        result: res.feasible ? `Min stop time ${res.minStopTime}s · buys ${res.purchases.map((p) => (p / 10).toFixed(0)).join(' / ')}` : 'Not feasible with these stations',
-        log: (_st, i) => `leg ${i + 1}: needs ${(legFuel[i]! / 10).toFixed(1)} fuel${stations[i] ? ' · station' : ''}`,
+        result: res.feasible
+          ? `Min stop time ${res.minStopTime}s · buys ${res.purchases.map((p) => (p / 10).toFixed(0)).join(' / ')}`
+          : 'Not feasible on this route with the current stations',
+        log: (_st, i) => `leg ${i + 1}: needs ${(params.legFuel[i]! / 10).toFixed(1)} fuel${params.stations[i] ? ' · station' : ''}`,
       });
     }
     case 'backtrack': {
-      const n = 14;
-      const k = 5;
+      const n = meta.checkpointOrder.length + 2; // ring vertices: start + checkpoints + finish
+      const k = Math.max(2, Math.floor(n / 5));
       const chosen = placeObstacles(n, k, makeRng(seed), trace);
-      return base({ data: { n, k, chosen }, summary: `${trace.counters.examinedEdges} pruned`, result: `Obstacles on roads ${chosen.join(', ')}` });
+      return base({ data: { n, k, chosen }, summary: `${trace.counters.examinedEdges} pruned`, result: `Obstacles on ${chosen.length} of ${n} ring roads: ${chosen.join(', ')}` });
     }
     default:
       return base({});

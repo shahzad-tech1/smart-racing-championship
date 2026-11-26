@@ -16,7 +16,7 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, html?: 
   return e;
 }
 
-const GROUPS: Group[] = ['Graph search', 'Shortest path', 'Spanning tree', 'Sorting', 'Dynamic programming & greedy', 'Backtracking'];
+const GROUPS: Group[] = ['Graph search', 'Shortest path', 'Spanning tree', 'Sorting', 'Dynamic programming & greedy', 'Backtracking', 'Priority queues'];
 
 /** Algorithm Lab: 12 real algorithms replayed from recorded traces. Graph algorithms play out on the 3D circuit. */
 export class AlgorithmLab {
@@ -427,7 +427,7 @@ export class AlgorithmLab {
       }
     });
     ctx.fillStyle = col.ink2!;
-    ctx.fillText('Sample values · cyan = being compared / moved · lime = sorted', pad, 20);
+    ctx.fillText('Track values · cyan = being compared / moved · lime = result', pad, 20);
   }
 
   private drawKnapsack(ctx: CanvasRenderingContext2D, w: number, h: number, col: Record<string, string>, run: Run, data: Record<string, unknown>, done: boolean): void {
